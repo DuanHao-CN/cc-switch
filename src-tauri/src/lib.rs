@@ -1242,6 +1242,9 @@ pub fn run() {
             commands::upsert_universal_provider,
             commands::delete_universal_provider,
             commands::sync_universal_provider,
+            commands::keyferry_status,
+            commands::keyferry_login_configure,
+            commands::keyferry_logout,
             // OpenCode specific
             commands::import_opencode_providers_from_live,
             commands::get_opencode_live_provider_ids,

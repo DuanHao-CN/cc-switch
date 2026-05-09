@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Plus,
   Settings,
@@ -27,6 +27,7 @@ import {
   Shield,
   Cpu,
   LayoutDashboard,
+  Loader2,
 } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { Provider, VisibleApps } from "@/types";
@@ -34,6 +35,7 @@ import type { EnvConflict } from "@/types/env";
 import { useProvidersQuery, useSettingsQuery } from "@/lib/query";
 import {
   providersApi,
+  keyferryApi,
   settingsApi,
   type AppId,
   type ProviderSwitchEvent,
@@ -75,6 +77,7 @@ import { DeepLinkImportDialog } from "@/components/DeepLinkImportDialog";
 import { FirstRunNoticeDialog } from "@/components/FirstRunNoticeDialog";
 import { AgentsPanel } from "@/components/agents/AgentsPanel";
 import { UniversalProviderPanel } from "@/components/universal";
+import { KeyFerryLoginPanel } from "@/components/keyferry/KeyFerryLoginPanel";
 import { McpIcon } from "@/components/BrandIcons";
 import { Button } from "@/components/ui/button";
 import { SessionManagerPage } from "@/components/sessions/SessionManagerPage";
@@ -97,6 +100,7 @@ type View =
   | "skillsDiscovery"
   | "mcp"
   | "agents"
+  | "keyferry"
   | "universal"
   | "sessions"
   | "workspace"
@@ -115,6 +119,30 @@ const DEFAULT_DRAG_BAR_HEIGHT = isWindows() || isLinux() ? 0 : 28; // px
 const HEADER_HEIGHT = 64; // px
 
 const STORAGE_KEY = "cc-switch-last-app";
+const KEYFERRY_ONLY_MODE = true;
+const KEYFERRY_INITIAL_VISIBLE_APPS: VisibleApps = {
+  claude: true,
+  codex: true,
+  gemini: true,
+  opencode: true,
+  openclaw: true,
+  hermes: false,
+};
+const KEYFERRY_CORE_VISIBLE_APPS: Pick<
+  VisibleApps,
+  "claude" | "codex" | "gemini"
+> = {
+  claude: true,
+  codex: true,
+  gemini: true,
+};
+const KEYFERRY_BLOCKED_VIEWS: View[] = ["universal"];
+const OPENCLAW_ONLY_VIEWS: View[] = [
+  "workspace",
+  "openclawEnv",
+  "openclawTools",
+  "openclawAgents",
+];
 const VALID_APPS: AppId[] = [
   "claude",
   "codex",
@@ -127,6 +155,9 @@ const VALID_APPS: AppId[] = [
 const getInitialApp = (): AppId => {
   const saved = localStorage.getItem(STORAGE_KEY) as AppId | null;
   if (saved && VALID_APPS.includes(saved)) {
+    if (KEYFERRY_ONLY_MODE && !KEYFERRY_INITIAL_VISIBLE_APPS[saved]) {
+      return "claude";
+    }
     return saved;
   }
   return "claude";
@@ -141,6 +172,7 @@ const VALID_VIEWS: View[] = [
   "skillsDiscovery",
   "mcp",
   "agents",
+  "keyferry",
   "universal",
   "sessions",
   "workspace",
@@ -153,6 +185,9 @@ const VALID_VIEWS: View[] = [
 const getInitialView = (): View => {
   const saved = localStorage.getItem(VIEW_STORAGE_KEY) as View | null;
   if (saved && VALID_VIEWS.includes(saved)) {
+    if (KEYFERRY_ONLY_MODE && KEYFERRY_BLOCKED_VIEWS.includes(saved)) {
+      return "providers";
+    }
     return saved;
   }
   return "providers";
@@ -177,7 +212,7 @@ function App() {
     isLinux() && (settingsData?.useAppWindowControls ?? false);
   const dragBarHeight = useAppWindowControls ? 32 : DEFAULT_DRAG_BAR_HEIGHT;
   const contentTopOffset = dragBarHeight + HEADER_HEIGHT;
-  const visibleApps: VisibleApps = settingsData?.visibleApps ?? {
+  const settingsVisibleApps: VisibleApps = settingsData?.visibleApps ?? {
     claude: true,
     codex: true,
     gemini: true,
@@ -185,6 +220,29 @@ function App() {
     openclaw: true,
     hermes: true,
   };
+  const {
+    data: keyferryStatus,
+    isLoading: isKeyferryStatusLoading,
+    refetch: refetchKeyferryStatus,
+  } = useQuery({
+    queryKey: ["keyferryStatus"],
+    queryFn: () => keyferryApi.status(),
+    enabled: KEYFERRY_ONLY_MODE,
+  });
+  const isKeyferryConfigured =
+    !KEYFERRY_ONLY_MODE || keyferryStatus?.configured === true;
+  const isKeyferryGateActive =
+    KEYFERRY_ONLY_MODE && !isKeyferryStatusLoading && !isKeyferryConfigured;
+  const isProviderConfigurationLocked = KEYFERRY_ONLY_MODE;
+  const keyferryConfiguredApps = keyferryStatus?.configuredApps ?? [];
+  const visibleApps: VisibleApps = KEYFERRY_ONLY_MODE
+    ? {
+        ...KEYFERRY_CORE_VISIBLE_APPS,
+        opencode: keyferryConfiguredApps.includes("opencode"),
+        openclaw: keyferryConfiguredApps.includes("openclaw"),
+        hermes: false,
+      }
+    : settingsVisibleApps;
 
   const getFirstVisibleApp = (): AppId => {
     if (visibleApps.claude) return "claude";
@@ -201,6 +259,21 @@ function App() {
       setActiveApp(getFirstVisibleApp());
     }
   }, [visibleApps, activeApp]);
+
+  useEffect(() => {
+    if (isKeyferryGateActive && currentView !== "keyferry") {
+      setCurrentView("keyferry");
+      return;
+    }
+
+    if (KEYFERRY_ONLY_MODE && KEYFERRY_BLOCKED_VIEWS.includes(currentView)) {
+      setCurrentView("providers");
+    }
+
+    if (OPENCLAW_ONLY_VIEWS.includes(currentView) && activeApp !== "openclaw") {
+      setCurrentView("providers");
+    }
+  }, [activeApp, currentView, isKeyferryGateActive]);
 
   // Fallback from sessions view when switching to an app without session support
   useEffect(() => {
@@ -356,6 +429,7 @@ function App() {
         const { listen } = await import("@tauri-apps/api/event");
         unsubscribe = await listen("universal-provider-synced", async () => {
           await queryClient.invalidateQueries({ queryKey: ["providers"] });
+          await queryClient.invalidateQueries({ queryKey: ["keyferryStatus"] });
           try {
             await providersApi.updateTrayMenu();
           } catch (error) {
@@ -889,6 +963,11 @@ function App() {
     }
   };
 
+  const handleKeyFerryConfigured = async () => {
+    await refetchKeyferryStatus();
+    setCurrentView("providers");
+  };
+
   const renderContent = () => {
     const content = (() => {
       switch (currentView) {
@@ -899,6 +978,7 @@ function App() {
               onOpenChange={() => setCurrentView("providers")}
               onImportSuccess={handleImportSuccess}
               defaultTab={settingsDefaultTab}
+              allowConfigImportExport={!isProviderConfigurationLocked}
             />
           );
         case "prompts":
@@ -938,7 +1018,14 @@ function App() {
           return (
             <AgentsPanel onOpenChange={() => setCurrentView("providers")} />
           );
+        case "keyferry":
+          return <KeyFerryLoginPanel onConfigured={handleKeyFerryConfigured} />;
         case "universal":
+          if (isProviderConfigurationLocked) {
+            return (
+              <KeyFerryLoginPanel onConfigured={handleKeyFerryConfigured} />
+            );
+          }
           return (
             <div className="px-6 pt-4">
               <UniversalProviderPanel />
@@ -982,39 +1069,57 @@ function App() {
                       onEdit={(provider) => {
                         setEditingProvider(provider);
                       }}
-                      onDelete={(provider) =>
-                        setConfirmAction({ provider, action: "delete" })
-                      }
+                      onDelete={(provider) => {
+                        if (!isProviderConfigurationLocked) {
+                          setConfirmAction({ provider, action: "delete" });
+                        }
+                      }}
                       onRemoveFromConfig={
-                        activeApp === "opencode" ||
-                        activeApp === "openclaw" ||
-                        activeApp === "hermes"
+                        !isProviderConfigurationLocked &&
+                        (activeApp === "opencode" ||
+                          activeApp === "openclaw" ||
+                          activeApp === "hermes")
                           ? (provider) =>
                               setConfirmAction({ provider, action: "remove" })
                           : undefined
                       }
                       onDisableOmo={
-                        activeApp === "opencode" ? handleDisableOmo : undefined
+                        !isProviderConfigurationLocked &&
+                        activeApp === "opencode"
+                          ? handleDisableOmo
+                          : undefined
                       }
                       onDisableOmoSlim={
+                        !isProviderConfigurationLocked &&
                         activeApp === "opencode"
                           ? handleDisableOmoSlim
                           : undefined
                       }
-                      onDuplicate={handleDuplicateProvider}
+                      onDuplicate={
+                        isProviderConfigurationLocked
+                          ? () => undefined
+                          : handleDuplicateProvider
+                      }
                       onConfigureUsage={setUsageProvider}
                       onOpenWebsite={handleOpenWebsite}
                       onOpenTerminal={
                         activeApp === "claude" ? handleOpenTerminal : undefined
                       }
-                      onCreate={() => setIsAddOpen(true)}
-                      onSetAsDefault={
-                        activeApp === "openclaw"
-                          ? setAsDefaultModel
-                          : activeApp === "hermes"
-                            ? switchProvider
-                            : undefined
+                      onCreate={
+                        isProviderConfigurationLocked
+                          ? undefined
+                          : () => setIsAddOpen(true)
                       }
+                      onSetAsDefault={
+                        !isProviderConfigurationLocked
+                          ? activeApp === "openclaw"
+                            ? setAsDefaultModel
+                            : activeApp === "hermes"
+                              ? switchProvider
+                              : undefined
+                          : undefined
+                      }
+                      configurationLocked={isProviderConfigurationLocked}
                     />
                   </motion.div>
                 </AnimatePresence>
@@ -1039,6 +1144,60 @@ function App() {
       </AnimatePresence>
     );
   };
+
+  if (
+    KEYFERRY_ONLY_MODE &&
+    (isKeyferryStatusLoading || !isKeyferryConfigured)
+  ) {
+    return (
+      <div
+        className="flex h-screen flex-col overflow-hidden bg-background text-foreground selection:bg-primary/30"
+        style={{ overflowX: "hidden", paddingTop: contentTopOffset }}
+      >
+        <div
+          className="fixed left-0 right-0 top-0 z-[60]"
+          data-tauri-drag-region
+          style={{ WebkitAppRegion: "drag", height: dragBarHeight } as any}
+        />
+        <header
+          className="fixed z-50 w-full border-b border-border/40 bg-background/80 backdrop-blur-md"
+          data-tauri-drag-region
+          style={
+            {
+              WebkitAppRegion: "drag",
+              top: dragBarHeight,
+              height: HEADER_HEIGHT,
+            } as any
+          }
+        >
+          <div
+            className="flex h-full items-center justify-between px-6"
+            data-tauri-drag-region
+            style={{ WebkitAppRegion: "drag" } as any}
+          >
+            <div
+              className="flex items-center gap-2"
+              style={{ WebkitAppRegion: "no-drag" } as any}
+            >
+              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                <KeyRound className="h-4 w-4" />
+              </div>
+              <span className="text-lg font-semibold">钥渡 KeyFerry</span>
+            </div>
+          </div>
+        </header>
+        <main className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+          {isKeyferryStatusLoading ? (
+            <div className="flex flex-1 items-center justify-center">
+              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+            </div>
+          ) : (
+            <KeyFerryLoginPanel onConfigured={handleKeyFerryConfigured} />
+          )}
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -1164,6 +1323,10 @@ function App() {
                   {currentView === "skillsDiscovery" && t("skills.title")}
                   {currentView === "mcp" && t("mcp.unifiedPanel.title")}
                   {currentView === "agents" && t("agents.title")}
+                  {currentView === "keyferry" &&
+                    t("keyferry.title", {
+                      defaultValue: "钥渡 KeyFerry",
+                    })}
                   {currentView === "universal" &&
                     t("universalProvider.title", {
                       defaultValue: "统一供应商",
@@ -1181,7 +1344,7 @@ function App() {
               <div className="flex items-center gap-2">
                 <div className="relative inline-flex items-center">
                   <a
-                    href="https://github.com/farion1231/cc-switch"
+                    href="https://x.sozdata.com"
                     target="_blank"
                     rel="noreferrer"
                     className={cn(
@@ -1191,7 +1354,7 @@ function App() {
                         : "text-blue-500 hover:text-blue-600 dark:text-blue-400 dark:hover:text-blue-300",
                     )}
                   >
-                    CC Switch
+                    钥渡 KeyFerry
                   </a>
                 </div>
                 <Button
@@ -1527,12 +1690,29 @@ function App() {
                     </div>
 
                     <Button
-                      onClick={() => setIsAddOpen(true)}
-                      size="icon"
-                      className={`ml-2 ${addActionButtonClass}`}
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setCurrentView("keyferry")}
+                      className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5"
+                      title={t("keyferry.title", {
+                        defaultValue: "钥渡 KeyFerry",
+                      })}
+                      aria-label={t("keyferry.title", {
+                        defaultValue: "钥渡 KeyFerry",
+                      })}
                     >
-                      <Plus className="w-5 h-5" />
+                      <KeyRound className="w-4 h-4" />
                     </Button>
+
+                    {!isProviderConfigurationLocked && (
+                      <Button
+                        onClick={() => setIsAddOpen(true)}
+                        size="icon"
+                        className={`ml-2 ${addActionButtonClass}`}
+                      >
+                        <Plus className="w-5 h-5" />
+                      </Button>
+                    )}
                   </>
                 )}
               </div>
@@ -1548,12 +1728,14 @@ function App() {
         {renderContent()}
       </main>
 
-      <AddProviderDialog
-        open={isAddOpen}
-        onOpenChange={setIsAddOpen}
-        appId={activeApp}
-        onSubmit={addProvider}
-      />
+      {!isProviderConfigurationLocked && (
+        <AddProviderDialog
+          open={isAddOpen}
+          onOpenChange={setIsAddOpen}
+          appId={activeApp}
+          onSubmit={addProvider}
+        />
+      )}
 
       <EditProviderDialog
         open={Boolean(editingProvider)}
@@ -1583,27 +1765,29 @@ function App() {
         />
       )}
 
-      <ConfirmDialog
-        isOpen={Boolean(confirmAction)}
-        title={
-          confirmAction?.action === "remove"
-            ? t("confirm.removeProvider")
-            : t("confirm.deleteProvider")
-        }
-        message={
-          confirmAction
-            ? confirmAction.action === "remove"
-              ? t("confirm.removeProviderMessage", {
-                  name: confirmAction.provider.name,
-                })
-              : t("confirm.deleteProviderMessage", {
-                  name: confirmAction.provider.name,
-                })
-            : ""
-        }
-        onConfirm={() => void handleConfirmAction()}
-        onCancel={() => setConfirmAction(null)}
-      />
+      {!isProviderConfigurationLocked && (
+        <ConfirmDialog
+          isOpen={Boolean(confirmAction)}
+          title={
+            confirmAction?.action === "remove"
+              ? t("confirm.removeProvider")
+              : t("confirm.deleteProvider")
+          }
+          message={
+            confirmAction
+              ? confirmAction.action === "remove"
+                ? t("confirm.removeProviderMessage", {
+                    name: confirmAction.provider.name,
+                  })
+                : t("confirm.deleteProviderMessage", {
+                    name: confirmAction.provider.name,
+                  })
+              : ""
+          }
+          onConfirm={() => void handleConfirmAction()}
+          onCancel={() => setConfirmAction(null)}
+        />
+      )}
 
       <ConfirmDialog
         isOpen={launchDashboardOpen}
@@ -1627,7 +1811,7 @@ function App() {
         onCancel={() => setLaunchDashboardOpen(false)}
       />
 
-      <DeepLinkImportDialog />
+      {!isProviderConfigurationLocked && <DeepLinkImportDialog />}
       <FirstRunNoticeDialog />
     </div>
   );

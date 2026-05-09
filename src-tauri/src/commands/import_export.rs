@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use tauri::State;
 use tauri_plugin_dialog::DialogExt;
 
+use super::keyferry::{keyferry_config_locked_message, keyferry_only_mode};
 use crate::commands::sync_support::{
     post_sync_warning_from_result, run_post_import_sync, success_payload_with_warning,
 };
@@ -43,6 +44,10 @@ pub async fn import_config_from_file(
     #[allow(non_snake_case)] filePath: String,
     state: State<'_, AppState>,
 ) -> Result<Value, String> {
+    if keyferry_only_mode() {
+        return Err(keyferry_config_locked_message().to_string());
+    }
+
     let db = state.db.clone();
     let db_for_sync = db.clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -153,6 +158,10 @@ pub async fn restore_db_backup(
     state: State<'_, AppState>,
     filename: String,
 ) -> Result<String, String> {
+    if keyferry_only_mode() {
+        return Err(keyferry_config_locked_message().to_string());
+    }
+
     let db = state.db.clone();
     tauri::async_runtime::spawn_blocking(move || db.restore_from_backup(&filename))
         .await

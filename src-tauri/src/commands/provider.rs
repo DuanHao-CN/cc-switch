@@ -1,6 +1,10 @@
 use indexmap::IndexMap;
 use tauri::{Emitter, State};
 
+use super::keyferry::{
+    is_keyferry_switchable_provider_id, is_keyferry_visible_provider,
+    keyferry_config_locked_message, keyferry_only_mode, KEYFERRY_PROVIDER_ID,
+};
 use crate::app_config::AppType;
 use crate::commands::copilot::CopilotAuthState;
 use crate::error::AppError;
@@ -17,6 +21,63 @@ const TEMPLATE_TYPE_TOKEN_PLAN: &str = "token_plan";
 const TEMPLATE_TYPE_BALANCE: &str = "balance";
 const COPILOT_UNIT_PREMIUM: &str = "requests";
 
+fn ensure_provider_config_unlocked() -> Result<(), String> {
+    if keyferry_only_mode() {
+        Err(keyferry_config_locked_message().to_string())
+    } else {
+        Ok(())
+    }
+}
+
+fn filter_keyferry_providers(
+    app_type: &AppType,
+    mut providers: IndexMap<String, Provider>,
+) -> IndexMap<String, Provider> {
+    if keyferry_only_mode() {
+        providers.retain(|id, provider| is_keyferry_visible_provider(app_type, id, provider));
+    }
+    providers
+}
+
+fn ensure_keyferry_switch_allowed(app_type: &AppType, id: &str) -> Result<(), String> {
+    if keyferry_only_mode() && !is_keyferry_switchable_provider_id(app_type, id) {
+        Err(keyferry_config_locked_message().to_string())
+    } else {
+        Ok(())
+    }
+}
+
+fn ensure_keyferry_provider_target_allowed(app_type: &AppType, id: &str) -> Result<(), String> {
+    if keyferry_only_mode() && !is_keyferry_switchable_provider_id(app_type, id) {
+        Err(keyferry_config_locked_message().to_string())
+    } else {
+        Ok(())
+    }
+}
+
+fn ensure_keyferry_provider_update_allowed(
+    app_type: &AppType,
+    original_id: Option<&str>,
+    next_id: &str,
+) -> Result<(), String> {
+    if !keyferry_only_mode() {
+        return Ok(());
+    }
+
+    let original_id = original_id.unwrap_or(next_id);
+    if original_id != next_id {
+        return Err(keyferry_config_locked_message().to_string());
+    }
+
+    if is_keyferry_switchable_provider_id(app_type, original_id)
+        && is_keyferry_switchable_provider_id(app_type, next_id)
+    {
+        Ok(())
+    } else {
+        Err(keyferry_config_locked_message().to_string())
+    }
+}
+
 /// 获取所有供应商
 #[tauri::command]
 pub fn get_providers(
@@ -24,13 +85,23 @@ pub fn get_providers(
     app: String,
 ) -> Result<IndexMap<String, Provider>, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
-    ProviderService::list(state.inner(), app_type).map_err(|e| e.to_string())
+    ProviderService::list(state.inner(), app_type.clone())
+        .map(|providers| filter_keyferry_providers(&app_type, providers))
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn get_current_provider(state: State<'_, AppState>, app: String) -> Result<String, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
-    ProviderService::current(state.inner(), app_type).map_err(|e| e.to_string())
+    let current =
+        ProviderService::current(state.inner(), app_type.clone()).map_err(|e| e.to_string())?;
+    if keyferry_only_mode()
+        && !current.is_empty()
+        && !is_keyferry_switchable_provider_id(&app_type, &current)
+    {
+        return Ok(String::new());
+    }
+    Ok(current)
 }
 
 #[tauri::command]
@@ -40,6 +111,7 @@ pub fn add_provider(
     provider: Provider,
     #[allow(non_snake_case)] addToLive: Option<bool>,
 ) -> Result<bool, String> {
+    ensure_provider_config_unlocked()?;
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
     ProviderService::add(state.inner(), app_type, provider, addToLive.unwrap_or(true))
         .map_err(|e| e.to_string())
@@ -53,6 +125,7 @@ pub fn update_provider(
     #[allow(non_snake_case)] originalId: Option<String>,
 ) -> Result<bool, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
+    ensure_keyferry_provider_update_allowed(&app_type, originalId.as_deref(), &provider.id)?;
     ProviderService::update(state.inner(), app_type, originalId.as_deref(), provider)
         .map_err(|e| e.to_string())
 }
@@ -63,6 +136,7 @@ pub fn delete_provider(
     app: String,
     id: String,
 ) -> Result<bool, String> {
+    ensure_provider_config_unlocked()?;
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
     ProviderService::delete(state.inner(), app_type, &id)
         .map(|_| true)
@@ -75,6 +149,7 @@ pub fn remove_provider_from_live_config(
     app: String,
     id: String,
 ) -> Result<bool, String> {
+    ensure_provider_config_unlocked()?;
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
     ProviderService::remove_from_live_config(state.inner(), app_type, &id)
         .map(|_| true)
@@ -105,6 +180,7 @@ pub fn switch_provider(
     id: String,
 ) -> Result<SwitchResult, String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
+    ensure_keyferry_switch_allowed(&app_type, &id)?;
     switch_provider_internal(&state, app_type, &id).map_err(|e| e.to_string())
 }
 
@@ -146,6 +222,7 @@ pub fn import_default_config_test_hook(
 
 #[tauri::command]
 pub fn import_default_config(state: State<'_, AppState>, app: String) -> Result<bool, String> {
+    ensure_provider_config_unlocked()?;
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
     import_default_config_internal(&state, app_type).map_err(Into::into)
 }
@@ -402,6 +479,7 @@ pub fn add_custom_endpoint(
     url: String,
 ) -> Result<(), String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
+    ensure_keyferry_provider_target_allowed(&app_type, &providerId)?;
     ProviderService::add_custom_endpoint(state.inner(), app_type, &providerId, url)
         .map_err(|e| e.to_string())
 }
@@ -414,6 +492,7 @@ pub fn remove_custom_endpoint(
     url: String,
 ) -> Result<(), String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
+    ensure_keyferry_provider_target_allowed(&app_type, &providerId)?;
     ProviderService::remove_custom_endpoint(state.inner(), app_type, &providerId, url)
         .map_err(|e| e.to_string())
 }
@@ -426,6 +505,7 @@ pub fn update_endpoint_last_used(
     url: String,
 ) -> Result<(), String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
+    ensure_keyferry_provider_target_allowed(&app_type, &providerId)?;
     ProviderService::update_endpoint_last_used(state.inner(), app_type, &providerId, url)
         .map_err(|e| e.to_string())
 }
@@ -436,6 +516,7 @@ pub fn update_providers_sort_order(
     app: String,
     updates: Vec<ProviderSortUpdate>,
 ) -> Result<bool, String> {
+    ensure_provider_config_unlocked()?;
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
     ProviderService::update_sort_order(state.inner(), app_type, updates).map_err(|e| e.to_string())
 }
@@ -464,7 +545,12 @@ fn emit_universal_provider_synced(app: &AppHandle, action: &str, id: &str) {
 pub fn get_universal_providers(
     state: State<'_, AppState>,
 ) -> Result<HashMap<String, UniversalProvider>, String> {
-    ProviderService::list_universal(state.inner()).map_err(|e| e.to_string())
+    let mut providers =
+        ProviderService::list_universal(state.inner()).map_err(|e| e.to_string())?;
+    if keyferry_only_mode() {
+        providers.retain(|id, _| id.as_str() == KEYFERRY_PROVIDER_ID);
+    }
+    Ok(providers)
 }
 
 #[tauri::command]
@@ -472,6 +558,9 @@ pub fn get_universal_provider(
     state: State<'_, AppState>,
     id: String,
 ) -> Result<Option<UniversalProvider>, String> {
+    if keyferry_only_mode() && id.as_str() != KEYFERRY_PROVIDER_ID {
+        return Ok(None);
+    }
     ProviderService::get_universal(state.inner(), &id).map_err(|e| e.to_string())
 }
 
@@ -481,6 +570,7 @@ pub fn upsert_universal_provider(
     state: State<'_, AppState>,
     provider: UniversalProvider,
 ) -> Result<bool, String> {
+    ensure_provider_config_unlocked()?;
     let id = provider.id.clone();
     let result =
         ProviderService::upsert_universal(state.inner(), provider).map_err(|e| e.to_string())?;
@@ -496,6 +586,7 @@ pub fn delete_universal_provider(
     state: State<'_, AppState>,
     id: String,
 ) -> Result<bool, String> {
+    ensure_provider_config_unlocked()?;
     let result =
         ProviderService::delete_universal(state.inner(), &id).map_err(|e| e.to_string())?;
 
@@ -510,6 +601,9 @@ pub fn sync_universal_provider(
     state: State<'_, AppState>,
     id: String,
 ) -> Result<bool, String> {
+    if keyferry_only_mode() && id.as_str() != KEYFERRY_PROVIDER_ID {
+        return Err(keyferry_config_locked_message().to_string());
+    }
     let result =
         ProviderService::sync_universal_to_apps(state.inner(), &id).map_err(|e| e.to_string())?;
 
@@ -520,6 +614,7 @@ pub fn sync_universal_provider(
 
 #[tauri::command]
 pub fn import_opencode_providers_from_live(state: State<'_, AppState>) -> Result<usize, String> {
+    ensure_provider_config_unlocked()?;
     crate::services::provider::import_opencode_providers_from_live(state.inner())
         .map_err(|e| e.to_string())
 }

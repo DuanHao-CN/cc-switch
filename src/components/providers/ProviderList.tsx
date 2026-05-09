@@ -68,6 +68,7 @@ interface ProviderListProps {
   isProxyTakeover?: boolean; // 代理接管模式（Live配置已被接管）
   activeProviderId?: string; // 代理当前实际使用的供应商 ID（用于故障转移模式下标注绿色边框）
   onSetAsDefault?: (provider: Provider) => void; // OpenClaw: set as default model
+  configurationLocked?: boolean;
 }
 
 export function ProviderList({
@@ -90,6 +91,7 @@ export function ProviderList({
   isProxyTakeover = false,
   activeProviderId,
   onSetAsDefault,
+  configurationLocked = false,
 }: ProviderListProps) {
   const { t } = useTranslation();
   const { checkProvider, isChecking } = useStreamCheck(appId);
@@ -318,8 +320,10 @@ export function ProviderList({
     return (
       <ProviderEmptyState
         appId={appId}
-        onCreate={onCreate}
-        onImport={() => importMutation.mutate()}
+        onCreate={configurationLocked ? undefined : onCreate}
+        onImport={
+          configurationLocked ? undefined : () => importMutation.mutate()
+        }
       />
     );
   }
@@ -377,8 +381,10 @@ export function ProviderList({
                 isAutoFailoverEnabled={isFailoverModeActive}
                 failoverPriority={getFailoverPriority(provider.id)}
                 isInFailoverQueue={isInFailoverQueue(provider.id)}
-                onToggleFailover={(enabled) =>
-                  handleToggleFailover(provider.id, enabled)
+                onToggleFailover={
+                  configurationLocked
+                    ? undefined
+                    : (enabled) => handleToggleFailover(provider.id, enabled)
                 }
                 activeProviderId={activeProviderId}
                 // OpenClaw: default model / Hermes: model.provider === provider.id
@@ -388,8 +394,11 @@ export function ProviderList({
                     : isProviderDefaultModel(provider.id)
                 }
                 onSetAsDefault={
-                  onSetAsDefault ? () => onSetAsDefault(provider) : undefined
+                  !configurationLocked && onSetAsDefault
+                    ? () => onSetAsDefault(provider)
+                    : undefined
                 }
+                configurationLocked={configurationLocked}
               />
             );
           })}
@@ -514,11 +523,12 @@ interface SortableProviderCardProps {
   isAutoFailoverEnabled: boolean;
   failoverPriority?: number;
   isInFailoverQueue: boolean;
-  onToggleFailover: (enabled: boolean) => void;
+  onToggleFailover?: (enabled: boolean) => void;
   activeProviderId?: string;
   // OpenClaw: default model
   isDefaultModel?: boolean;
   onSetAsDefault?: () => void;
+  configurationLocked?: boolean;
 }
 
 function SortableProviderCard({
@@ -549,6 +559,7 @@ function SortableProviderCard({
   activeProviderId,
   isDefaultModel,
   onSetAsDefault,
+  configurationLocked,
 }: SortableProviderCardProps) {
   const {
     setNodeRef,
@@ -580,9 +591,7 @@ function SortableProviderCard({
         onDisableOmo={onDisableOmo}
         onDisableOmoSlim={onDisableOmoSlim}
         onDuplicate={onDuplicate}
-        onConfigureUsage={
-          onConfigureUsage ? (item) => onConfigureUsage(item) : () => undefined
-        }
+        onConfigureUsage={onConfigureUsage}
         onOpenWebsite={onOpenWebsite}
         onOpenTerminal={onOpenTerminal}
         onTest={onTest}
@@ -602,6 +611,7 @@ function SortableProviderCard({
         // OpenClaw: default model
         isDefaultModel={isDefaultModel}
         onSetAsDefault={onSetAsDefault}
+        configurationLocked={configurationLocked}
       />
     </div>
   );

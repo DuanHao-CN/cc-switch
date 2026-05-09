@@ -183,7 +183,7 @@ impl Database {
         // 10. Proxy Request Logs 表
         conn.execute("CREATE TABLE IF NOT EXISTS proxy_request_logs (
             request_id TEXT PRIMARY KEY, provider_id TEXT NOT NULL, app_type TEXT NOT NULL, model TEXT NOT NULL,
-            request_model TEXT,
+            request_model TEXT, data_source TEXT NOT NULL DEFAULT 'proxy',
             input_tokens INTEGER NOT NULL DEFAULT 0, output_tokens INTEGER NOT NULL DEFAULT 0,
             cache_read_tokens INTEGER NOT NULL DEFAULT 0, cache_creation_tokens INTEGER NOT NULL DEFAULT 0,
             input_cost_usd TEXT NOT NULL DEFAULT '0', output_cost_usd TEXT NOT NULL DEFAULT '0',
@@ -191,8 +191,7 @@ impl Database {
             total_cost_usd TEXT NOT NULL DEFAULT '0', latency_ms INTEGER NOT NULL, first_token_ms INTEGER,
             duration_ms INTEGER, status_code INTEGER NOT NULL, error_message TEXT, session_id TEXT,
             provider_type TEXT, is_streaming INTEGER NOT NULL DEFAULT 0,
-            cost_multiplier TEXT NOT NULL DEFAULT '1.0', created_at INTEGER NOT NULL,
-            data_source TEXT NOT NULL DEFAULT 'proxy'
+            cost_multiplier TEXT NOT NULL DEFAULT '1.0', created_at INTEGER NOT NULL
         )", []).map_err(|e| AppError::Database(e.to_string()))?;
 
         conn.execute("CREATE INDEX IF NOT EXISTS idx_request_logs_provider ON proxy_request_logs(provider_id, app_type)", [])
@@ -214,6 +213,7 @@ impl Database {
             [],
         )
         .map_err(|e| AppError::Database(e.to_string()))?;
+        Self::create_request_logs_usage_indexes_if_supported(conn)?;
 
         // 11. Model Pricing 表
         conn.execute(
@@ -1107,6 +1107,7 @@ impl Database {
                 "data_source",
                 "TEXT NOT NULL DEFAULT 'proxy'",
             )?;
+            Self::create_request_logs_usage_indexes_if_supported(conn)?;
         }
 
         // 2. 创建会话日志同步状态表
@@ -1152,11 +1153,11 @@ impl Database {
             }
         }
 
-        log::info!("v7 -> v8 迁移完成：data_source 列、session_log_sync 表、修正 13 个模型定价");
+        log::info!("v7 -> v8 迁移完成：data_source 列、session_log_sync 表、修正模型定价");
         Ok(())
     }
 
-    /// v8 → v9: 全面补充模型定价（清空 + 重新 seed）
+    /// v8 -> v9: 全面补充模型定价（清空 + 重新 seed）
     fn migrate_v8_to_v9(conn: &Connection) -> Result<(), AppError> {
         conn.execute(
             "CREATE TABLE IF NOT EXISTS model_pricing (
@@ -1175,7 +1176,7 @@ impl Database {
         Ok(())
     }
 
-    /// v9 -> v10 迁移：添加 Hermes Agent 支持
+    /// v9 -> v10: 添加 Hermes Agent 支持
     fn migrate_v9_to_v10(conn: &Connection) -> Result<(), AppError> {
         Self::add_column_if_missing(
             conn,
@@ -1888,6 +1889,51 @@ impl Database {
         let sql = format!("PRAGMA user_version = {version};");
         conn.execute(&sql, [])
             .map_err(|e| AppError::Database(format!("写入 user_version 失败: {e}")))?;
+        Ok(())
+    }
+
+    fn create_request_logs_usage_indexes_if_supported(conn: &Connection) -> Result<(), AppError> {
+        if !Self::table_exists(conn, "proxy_request_logs")? {
+            return Ok(());
+        }
+
+        let has_app_type = Self::has_column(conn, "proxy_request_logs", "app_type")?;
+        let has_created_at = Self::has_column(conn, "proxy_request_logs", "created_at")?;
+        if has_app_type && has_created_at {
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_request_logs_app_created_at
+                 ON proxy_request_logs(app_type, created_at DESC)",
+                [],
+            )
+            .map_err(|e| AppError::Database(format!("创建使用量应用时间索引失败: {e}")))?;
+        }
+
+        let required_columns = [
+            "app_type",
+            "data_source",
+            "input_tokens",
+            "output_tokens",
+            "cache_read_tokens",
+            "created_at",
+            "cache_creation_tokens",
+        ];
+        for column in required_columns {
+            if !Self::has_column(conn, "proxy_request_logs", column)? {
+                return Ok(());
+            }
+        }
+
+        conn.execute("DROP INDEX IF EXISTS idx_request_logs_dedup_lookup", [])
+            .map_err(|e| AppError::Database(format!("删除旧使用量去重索引失败: {e}")))?;
+
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_request_logs_dedup_lookup_expr
+             ON proxy_request_logs(app_type, COALESCE(data_source, 'proxy'), input_tokens,
+                                   output_tokens, cache_read_tokens, created_at,
+                                   cache_creation_tokens)",
+            [],
+        )
+        .map_err(|e| AppError::Database(format!("创建使用量去重表达式索引失败: {e}")))?;
         Ok(())
     }
 

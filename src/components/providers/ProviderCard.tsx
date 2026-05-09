@@ -41,7 +41,7 @@ interface ProviderCardProps {
   onRemoveFromConfig?: (provider: Provider) => void;
   onDisableOmo?: () => void;
   onDisableOmoSlim?: () => void;
-  onConfigureUsage: (provider: Provider) => void;
+  onConfigureUsage?: (provider: Provider) => void;
   onOpenWebsite: (url: string) => void;
   onDuplicate: (provider: Provider) => void;
   onTest?: (provider: Provider) => void;
@@ -58,6 +58,7 @@ interface ProviderCardProps {
   // OpenClaw: default model
   isDefaultModel?: boolean;
   onSetAsDefault?: () => void;
+  configurationLocked?: boolean;
 }
 
 /** 判断是否为官方供应商（无自定义 base URL / API key，直连官方 API） */
@@ -146,6 +147,7 @@ export function ProviderCard({
   // OpenClaw: default model
   isDefaultModel,
   onSetAsDefault,
+  configurationLocked = false,
 }: ProviderCardProps) {
   const { t } = useTranslation();
 
@@ -277,19 +279,21 @@ export function ProviderCard({
       />
       <div className="relative flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex flex-1 items-center gap-2">
-          <button
-            type="button"
-            className={cn(
-              "-ml-1.5 flex-shrink-0 cursor-grab active:cursor-grabbing p-1.5",
-              "text-muted-foreground/50 hover:text-muted-foreground transition-colors",
-              dragHandleProps?.isDragging && "cursor-grabbing",
-            )}
-            aria-label={t("provider.dragHandle")}
-            {...(dragHandleProps?.attributes ?? {})}
-            {...(dragHandleProps?.listeners ?? {})}
-          >
-            <GripVertical className="h-4 w-4" />
-          </button>
+          {!configurationLocked && (
+            <button
+              type="button"
+              className={cn(
+                "-ml-1.5 flex-shrink-0 cursor-grab active:cursor-grabbing p-1.5",
+                "text-muted-foreground/50 hover:text-muted-foreground transition-colors",
+                dragHandleProps?.isDragging && "cursor-grabbing",
+              )}
+              aria-label={t("provider.dragHandle")}
+              {...(dragHandleProps?.attributes ?? {})}
+              {...(dragHandleProps?.listeners ?? {})}
+            >
+              <GripVertical className="h-4 w-4" />
+            </button>
+          )}
 
           <div className="h-8 w-8 rounded-lg bg-muted flex items-center justify-center border border-border group-hover:scale-105 transition-transform duration-300">
             <ProviderIcon
@@ -451,33 +455,41 @@ export function ProviderCard({
               isOmo={isAnyOmo}
               onSwitch={() => onSwitch(provider)}
               onEdit={() => onEdit(provider)}
-              onDuplicate={() => onDuplicate(provider)}
+              onDuplicate={
+                configurationLocked ? undefined : () => onDuplicate(provider)
+              }
               onTest={
                 onTest && !isOfficial && !isCopilot && !isCodexOauth
                   ? () => onTest(provider)
                   : undefined
               }
               onConfigureUsage={
-                isOfficial || isCopilot || isCodexOauth
+                !onConfigureUsage || isOfficial || isCopilot || isCodexOauth
                   ? undefined
                   : () => onConfigureUsage(provider)
               }
-              onDelete={() => onDelete(provider)}
+              onDelete={
+                configurationLocked ? undefined : () => onDelete(provider)
+              }
               onRemoveFromConfig={
-                onRemoveFromConfig
+                !configurationLocked && onRemoveFromConfig
                   ? () => onRemoveFromConfig(provider)
                   : undefined
               }
-              onDisableOmo={handleDisableAnyOmo}
+              onDisableOmo={
+                configurationLocked ? undefined : handleDisableAnyOmo
+              }
               onOpenTerminal={
                 onOpenTerminal ? () => onOpenTerminal(provider) : undefined
               }
               isAutoFailoverEnabled={isAutoFailoverEnabled}
               isInFailoverQueue={isInFailoverQueue}
-              onToggleFailover={onToggleFailover}
+              onToggleFailover={
+                configurationLocked ? undefined : onToggleFailover
+              }
               // OpenClaw: default model
               isDefaultModel={isDefaultModel}
-              onSetAsDefault={onSetAsDefault}
+              onSetAsDefault={configurationLocked ? undefined : onSetAsDefault}
             />
           </div>
         </div>

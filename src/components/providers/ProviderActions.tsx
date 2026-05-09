@@ -27,10 +27,10 @@ interface ProviderActionsProps {
   isOmo?: boolean;
   onSwitch: () => void;
   onEdit: () => void;
-  onDuplicate: () => void;
+  onDuplicate?: () => void;
   onTest?: () => void;
   onConfigureUsage?: () => void;
-  onDelete: () => void;
+  onDelete?: () => void;
   onRemoveFromConfig?: () => void;
   onDisableOmo?: () => void;
   onOpenTerminal?: () => void;
@@ -96,7 +96,7 @@ export function ProviderActions({
         if (onRemoveFromConfig) {
           onRemoveFromConfig();
         } else {
-          onDelete();
+          onDelete?.();
         }
       } else {
         onSwitch(); // 添加到配置
@@ -209,7 +209,9 @@ export function ProviderActions({
   const buttonState = getMainButtonState();
 
   const canDelete =
-    !isReadOnly && (isOmo || isAdditiveMode ? true : !isCurrent);
+    Boolean(onDelete) &&
+    !isReadOnly &&
+    (isOmo || isAdditiveMode ? true : !isCurrent);
   const readOnlyHint = t("provider.managedByHermesHint", {
     defaultValue: "由 Hermes 管理，请在 Hermes Web UI 中编辑",
   });
@@ -273,15 +275,17 @@ export function ProviderActions({
           <Edit className="h-4 w-4" />
         </Button>
 
-        <Button
-          size="icon"
-          variant="ghost"
-          onClick={onDuplicate}
-          title={t("provider.duplicate")}
-          className={iconButtonClass}
-        >
-          <Copy className="h-4 w-4" />
-        </Button>
+        {onDuplicate && (
+          <Button
+            size="icon"
+            variant="ghost"
+            onClick={onDuplicate}
+            title={t("provider.duplicate")}
+            className={iconButtonClass}
+          >
+            <Copy className="h-4 w-4" />
+          </Button>
+        )}
 
         <Button
           size="icon"

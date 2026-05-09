@@ -171,10 +171,18 @@ export interface ProviderMeta {
   promptCacheKey?: string;
   // Codex OAuth FAST mode: injects service_tier="priority" on ChatGPT Codex requests
   codexFastMode?: boolean;
+  // 累加模式应用中，该 provider 是否已写入 live config
+  liveConfigManaged?: boolean;
   // 供应商类型（用于识别 Copilot 等特殊供应商）
   providerType?: string;
   // GitHub Copilot 关联账号 ID（旧字段，保留兼容读取）
   githubAccountId?: string;
+  // KeyFerry 账户状态字段
+  keyferryUsername?: string;
+  keyferryUserId?: string;
+  keyferryTokenId?: number;
+  keyferryTokenName?: string;
+  keyferryConfiguredAt?: number;
 }
 
 // Skill 同步方式
@@ -417,6 +425,8 @@ export interface UniversalProviderApps {
   claude: boolean;
   codex: boolean;
   gemini: boolean;
+  opencode: boolean;
+  openclaw: boolean;
 }
 
 // Claude 模型配置

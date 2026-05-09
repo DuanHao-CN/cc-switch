@@ -492,8 +492,19 @@ pub fn create_tray_menu(
             continue;
         }
 
+        if crate::commands::keyferry_only_mode()
+            && crate::commands::keyferry_child_provider_id(&section.app_type).is_none()
+        {
+            continue;
+        }
+
         let app_type_str = section.app_type.as_str();
-        let providers = app_state.db.get_all_providers(app_type_str)?;
+        let mut providers = app_state.db.get_all_providers(app_type_str)?;
+        if crate::commands::keyferry_only_mode() {
+            providers.retain(|id, provider| {
+                crate::commands::is_keyferry_visible_provider(&section.app_type, id, provider)
+            });
+        }
 
         let current_id =
             crate::settings::get_effective_current_provider(&app_state.db, &section.app_type)?

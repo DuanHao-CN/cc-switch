@@ -2460,6 +2460,14 @@ impl ProviderService {
                 let gemini_id = format!("universal-gemini-{id}");
                 let _ = state.db.delete_provider("gemini", &gemini_id);
             }
+            if p.apps.opencode {
+                let opencode_id = format!("universal-opencode-{id}");
+                let _ = Self::delete(state, AppType::OpenCode, &opencode_id);
+            }
+            if p.apps.openclaw {
+                let openclaw_id = format!("universal-openclaw-{id}");
+                let _ = Self::delete(state, AppType::OpenClaw, &openclaw_id);
+            }
         }
 
         Ok(true)
@@ -2513,6 +2521,48 @@ impl ProviderService {
         } else {
             let gemini_id = format!("universal-gemini-{id}");
             let _ = state.db.delete_provider("gemini", &gemini_id);
+        }
+
+        // 同步到 OpenCode（累加模式：写入 live config）
+        if let Some(mut opencode_provider) = provider.to_opencode_provider() {
+            if let Some(existing) = state
+                .db
+                .get_provider_by_id(&opencode_provider.id, "opencode")?
+            {
+                let mut merged = existing.settings_config.clone();
+                Self::merge_json(&mut merged, &opencode_provider.settings_config);
+                opencode_provider.settings_config = merged;
+            }
+            state.db.save_provider("opencode", &opencode_provider)?;
+            write_live_with_common_config(
+                state.db.as_ref(),
+                &AppType::OpenCode,
+                &opencode_provider,
+            )?;
+        } else {
+            let opencode_id = format!("universal-opencode-{id}");
+            let _ = Self::delete(state, AppType::OpenCode, &opencode_id);
+        }
+
+        // 同步到 OpenClaw（累加模式：写入 live config）
+        if let Some(mut openclaw_provider) = provider.to_openclaw_provider() {
+            if let Some(existing) = state
+                .db
+                .get_provider_by_id(&openclaw_provider.id, "openclaw")?
+            {
+                let mut merged = existing.settings_config.clone();
+                Self::merge_json(&mut merged, &openclaw_provider.settings_config);
+                openclaw_provider.settings_config = merged;
+            }
+            state.db.save_provider("openclaw", &openclaw_provider)?;
+            write_live_with_common_config(
+                state.db.as_ref(),
+                &AppType::OpenClaw,
+                &openclaw_provider,
+            )?;
+        } else {
+            let openclaw_id = format!("universal-openclaw-{id}");
+            let _ = Self::delete(state, AppType::OpenClaw, &openclaw_id);
         }
 
         Ok(true)
