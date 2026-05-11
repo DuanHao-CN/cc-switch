@@ -238,8 +238,24 @@ vi.mock("@/components/settings/AboutSection", () => ({
 }));
 
 vi.mock("@/components/settings/WebdavSyncSection", () => ({
-  WebdavSyncSection: ({ config }: any) => (
-    <div>webdav-sync-section:{config?.baseUrl ?? "none"}</div>
+  WebdavSyncSection: ({ allowDownload, config }: any) => (
+    <div>
+      webdav-sync-section:{config?.baseUrl ?? "none"}:
+      {allowDownload === false ? "download-locked" : "download-allowed"}
+    </div>
+  ),
+}));
+
+vi.mock("@/components/settings/BackupListSection", () => ({
+  BackupListSection: ({ allowRestore, onSettingsChange }: any) => (
+    <div>
+      <button onClick={() => onSettingsChange({ backupRetainCount: 15 })}>
+        settings.backupManager.createBackup
+      </button>
+      {allowRestore !== false && (
+        <button>settings.backupManager.restore</button>
+      )}
+    </div>
   ),
 }));
 
@@ -340,7 +356,9 @@ describe("SettingsPage Component", () => {
 
     fireEvent.click(screen.getByText("settings.tabAdvanced"));
     fireEvent.click(screen.getByText("settings.advanced.cloudSync.title"));
-    expect(screen.getByText("webdav-sync-section:none")).toBeInTheDocument();
+    expect(
+      screen.getByText("webdav-sync-section:none:download-allowed"),
+    ).toBeInTheDocument();
     fireEvent.click(screen.getByText("settings.advanced.data.title"));
 
     // 有文件时，点击导入按钮执行 importConfig
@@ -373,6 +391,48 @@ describe("SettingsPage Component", () => {
       await lastUseImportExportOptions.onImportSuccess();
     }
     expect(onImportSuccess).toHaveBeenCalledTimes(1);
+  });
+
+  it("should keep safe advanced tools visible when provider restore paths are locked", () => {
+    importExportMock = createImportExportMock({
+      selectedFile: "/tmp/config.json",
+    });
+
+    renderSettingsPage({
+      allowConfigImport: false,
+      allowDatabaseRestore: false,
+    });
+
+    fireEvent.click(screen.getByText("settings.tabAdvanced"));
+
+    // Regression: ISSUE-001 - KeyFerry lock must not hide the whole advanced tools group.
+    // Found by /qa on 2026-05-11.
+    // Report: .gstack/qa-reports/qa-report-keyferry-pr-2026-05-11.md
+    fireEvent.click(screen.getByText("settings.advanced.data.title"));
+    expect(
+      screen.getByRole("button", { name: "settings.exportConfig" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /settings\.import/ }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "common.clear" }),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("settings.advanced.backup.title"));
+    expect(
+      screen.getByText("settings.backupManager.createBackup"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", {
+        name: "settings.backupManager.restore",
+      }),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("settings.advanced.cloudSync.title"));
+    expect(
+      screen.getByText("webdav-sync-section:none:download-locked"),
+    ).toBeInTheDocument();
   });
 
   it("should call saveSettings and close dialog when clicking save", async () => {

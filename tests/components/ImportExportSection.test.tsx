@@ -112,4 +112,32 @@ describe("ImportExportSection Component", () => {
     expect(screen.getByText("settings.importFailed")).toBeInTheDocument();
     expect(screen.getByText("Parse failed")).toBeInTheDocument();
   });
+
+  it("should keep export available when import is locked", () => {
+    render(
+      <ImportExportSection
+        {...baseProps}
+        allowImport={false}
+        selectedFile="/tmp/test/config.json"
+      />,
+    );
+
+    // Regression: ISSUE-001 - KeyFerry lock must hide SQL import without hiding SQL export.
+    // Found by /qa on 2026-05-11.
+    // Report: .gstack/qa-reports/qa-report-keyferry-pr-2026-05-11.md
+    expect(
+      screen.queryByRole("button", { name: /settings\.import/ }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /settings\.selectConfigFile/ }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "common.clear" }),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "settings.exportConfig" }),
+    );
+    expect(baseProps.onExport).toHaveBeenCalledTimes(1);
+  });
 });

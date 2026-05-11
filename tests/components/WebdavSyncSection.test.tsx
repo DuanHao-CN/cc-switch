@@ -2,6 +2,7 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import "@testing-library/jest-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import type { ComponentProps } from "react";
 
 import { WebdavSyncSection } from "@/components/settings/WebdavSyncSection";
 import type { WebDavSyncSettings } from "@/types";
@@ -97,7 +98,10 @@ const baseConfig: WebDavSyncSettings = {
   status: {},
 };
 
-function renderSection(config?: WebDavSyncSettings) {
+function renderSection(
+  config?: WebDavSyncSettings,
+  props: Partial<ComponentProps<typeof WebdavSyncSection>> = {},
+) {
   const client = new QueryClient({
     defaultOptions: {
       queries: { retry: false },
@@ -106,7 +110,7 @@ function renderSection(config?: WebDavSyncSettings) {
   });
   const view = render(
     <QueryClientProvider client={client}>
-      <WebdavSyncSection config={config} />
+      <WebdavSyncSection config={config} {...props} />
     </QueryClientProvider>,
   );
   return { ...view, client };
@@ -554,5 +558,28 @@ describe("WebdavSyncSection", () => {
         "settings.webdavSync.downloadFailed",
       );
     });
+  });
+
+  it("keeps WebDAV configuration and upload visible when download restore is locked", () => {
+    renderSection(baseConfig, { allowDownload: false });
+
+    // Regression: ISSUE-001 - WebDAV settings should remain usable, but DB restore via download is locked.
+    // Found by /qa on 2026-05-11.
+    // Report: .gstack/qa-reports/qa-report-keyferry-pr-2026-05-11.md
+    expect(
+      screen.getByPlaceholderText("settings.webdavSync.baseUrlPlaceholder"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "settings.webdavSync.test" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "settings.webdavSync.save" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "settings.webdavSync.upload" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "settings.webdavSync.download" }),
+    ).not.toBeInTheDocument();
   });
 });

@@ -25,6 +25,10 @@ import {
   useOpenClawLiveProviderIds,
   useOpenClawDefaultModel,
 } from "@/hooks/useOpenClaw";
+import {
+  useHermesLiveProviderIds,
+  useHermesModelConfig,
+} from "@/hooks/useHermes";
 import { useStreamCheck } from "@/hooks/useStreamCheck";
 import { ProviderCard } from "@/components/providers/ProviderCard";
 import { ProviderEmptyState } from "@/components/providers/ProviderEmptyState";
@@ -64,6 +68,7 @@ interface ProviderListProps {
   isProxyTakeover?: boolean; // 代理接管模式（Live配置已被接管）
   activeProviderId?: string; // 代理当前实际使用的供应商 ID（用于故障转移模式下标注绿色边框）
   onSetAsDefault?: (provider: Provider) => void; // OpenClaw: set as default model
+  configurationLocked?: boolean;
 }
 
 export function ProviderList({
@@ -86,6 +91,7 @@ export function ProviderList({
   isProxyTakeover = false,
   activeProviderId,
   onSetAsDefault,
+  configurationLocked = false,
 }: ProviderListProps) {
   const { t } = useTranslation();
   const { checkProvider, isChecking } = useStreamCheck(appId);
@@ -105,7 +111,14 @@ export function ProviderList({
     appId === "openclaw",
   );
 
-  // 判断供应商是否已添加到配置（累加模式应用：OpenCode/OpenClaw）
+  // Hermes: 查询 live 配置中的供应商 ID 列表，用于判断 isInConfig
+  const { data: hermesLiveIds } = useHermesLiveProviderIds(appId === "hermes");
+
+  // Hermes: 读取当前 model.provider，用于判断哪个供应商是"当前激活"（高亮）
+  const { data: hermesModelConfig } = useHermesModelConfig(appId === "hermes");
+  const hermesCurrentProviderId = hermesModelConfig?.provider;
+
+  // 判断供应商是否已添加到配置（累加模式应用：OpenCode/OpenClaw/Hermes）
   const isProviderInConfig = useCallback(
     (providerId: string): boolean => {
       if (appId === "opencode") {
@@ -114,9 +127,12 @@ export function ProviderList({
       if (appId === "openclaw") {
         return openclawLiveIds?.includes(providerId) ?? false;
       }
+      if (appId === "hermes") {
+        return hermesLiveIds?.includes(providerId) ?? false;
+      }
       return true; // 其他应用始终返回 true
     },
-    [appId, opencodeLiveIds, openclawLiveIds],
+    [appId, opencodeLiveIds, openclawLiveIds, hermesLiveIds],
   );
 
   // OpenClaw: query default model to determine which provider is default
@@ -229,6 +245,10 @@ export function ProviderList({
         const count = await providersApi.importOpenClawFromLive();
         return count > 0;
       }
+      if (appId === "hermes") {
+        const count = await providersApi.importHermesFromLive();
+        return count > 0;
+      }
       return providersApi.importDefault(appId);
     },
     onSuccess: (imported) => {
@@ -300,8 +320,10 @@ export function ProviderList({
     return (
       <ProviderEmptyState
         appId={appId}
-        onCreate={onCreate}
-        onImport={() => importMutation.mutate()}
+        onCreate={configurationLocked ? undefined : onCreate}
+        onImport={
+          configurationLocked ? undefined : () => importMutation.mutate()
+        }
       />
     );
   }
@@ -323,6 +345,8 @@ export function ProviderList({
             const isOmoCurrent = isOmo && provider.id === (currentOmoId || "");
             const isOmoSlimCurrent =
               isOmoSlim && provider.id === (currentOmoSlimId || "");
+            const isHermesCurrent =
+              appId === "hermes" && hermesCurrentProviderId === provider.id;
             return (
               <SortableProviderCard
                 key={provider.id}
@@ -332,7 +356,9 @@ export function ProviderList({
                     ? isOmoCurrent
                     : isOmoSlim
                       ? isOmoSlimCurrent
-                      : provider.id === currentProviderId
+                      : appId === "hermes"
+                        ? isHermesCurrent
+                        : provider.id === currentProviderId
                 }
                 appId={appId}
                 isInConfig={isProviderInConfig(provider.id)}
@@ -348,26 +374,31 @@ export function ProviderList({
                 onConfigureUsage={onConfigureUsage}
                 onOpenWebsite={onOpenWebsite}
                 onOpenTerminal={onOpenTerminal}
-                onTest={
-                  appId !== "opencode" && appId !== "openclaw"
-                    ? handleTest
-                    : undefined
-                }
+                onTest={handleTest}
                 isTesting={isChecking(provider.id)}
                 isProxyRunning={isProxyRunning}
                 isProxyTakeover={isProxyTakeover}
                 isAutoFailoverEnabled={isFailoverModeActive}
                 failoverPriority={getFailoverPriority(provider.id)}
                 isInFailoverQueue={isInFailoverQueue(provider.id)}
-                onToggleFailover={(enabled) =>
-                  handleToggleFailover(provider.id, enabled)
+                onToggleFailover={
+                  configurationLocked
+                    ? undefined
+                    : (enabled) => handleToggleFailover(provider.id, enabled)
                 }
                 activeProviderId={activeProviderId}
-                // OpenClaw: default model
-                isDefaultModel={isProviderDefaultModel(provider.id)}
-                onSetAsDefault={
-                  onSetAsDefault ? () => onSetAsDefault(provider) : undefined
+                // OpenClaw: default model / Hermes: model.provider === provider.id
+                isDefaultModel={
+                  appId === "hermes"
+                    ? isHermesCurrent
+                    : isProviderDefaultModel(provider.id)
                 }
+                onSetAsDefault={
+                  !configurationLocked && onSetAsDefault
+                    ? () => onSetAsDefault(provider)
+                    : undefined
+                }
+                configurationLocked={configurationLocked}
               />
             );
           })}
@@ -492,11 +523,12 @@ interface SortableProviderCardProps {
   isAutoFailoverEnabled: boolean;
   failoverPriority?: number;
   isInFailoverQueue: boolean;
-  onToggleFailover: (enabled: boolean) => void;
+  onToggleFailover?: (enabled: boolean) => void;
   activeProviderId?: string;
   // OpenClaw: default model
   isDefaultModel?: boolean;
   onSetAsDefault?: () => void;
+  configurationLocked?: boolean;
 }
 
 function SortableProviderCard({
@@ -527,6 +559,7 @@ function SortableProviderCard({
   activeProviderId,
   isDefaultModel,
   onSetAsDefault,
+  configurationLocked,
 }: SortableProviderCardProps) {
   const {
     setNodeRef,
@@ -558,9 +591,7 @@ function SortableProviderCard({
         onDisableOmo={onDisableOmo}
         onDisableOmoSlim={onDisableOmoSlim}
         onDuplicate={onDuplicate}
-        onConfigureUsage={
-          onConfigureUsage ? (item) => onConfigureUsage(item) : () => undefined
-        }
+        onConfigureUsage={onConfigureUsage}
         onOpenWebsite={onOpenWebsite}
         onOpenTerminal={onOpenTerminal}
         onTest={onTest}
@@ -580,6 +611,7 @@ function SortableProviderCard({
         // OpenClaw: default model
         isDefaultModel={isDefaultModel}
         onSetAsDefault={onSetAsDefault}
+        configurationLocked={configurationLocked}
       />
     </div>
   );

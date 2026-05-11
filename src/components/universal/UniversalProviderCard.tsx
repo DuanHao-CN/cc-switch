@@ -24,6 +24,8 @@ export function UniversalProviderCard({
     provider.apps.claude ? "Claude" : null,
     provider.apps.codex ? "Codex" : null,
     provider.apps.gemini ? "Gemini" : null,
+    provider.apps.opencode ? "OpenCode" : null,
+    provider.apps.openclaw ? "OpenClaw" : null,
   ].filter((app): app is string => app !== null);
 
   return (

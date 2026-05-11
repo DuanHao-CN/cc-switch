@@ -6,7 +6,7 @@ use std::sync::{OnceLock, RwLock};
 
 use crate::app_config::AppType;
 use crate::error::AppError;
-use crate::services::skill::SyncMethod;
+use crate::services::skill::{SkillStorageLocation, SyncMethod};
 
 /// 自定义端点配置（历史兼容，实际存储在 provider.meta.custom_endpoints）
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -36,6 +36,8 @@ pub struct VisibleApps {
     pub opencode: bool,
     #[serde(default = "default_true")]
     pub openclaw: bool,
+    #[serde(default)]
+    pub hermes: bool,
 }
 
 impl Default for VisibleApps {
@@ -46,6 +48,7 @@ impl Default for VisibleApps {
             gemini: true,
             opencode: true,
             openclaw: true,
+            hermes: false, // 默认不显示，需用户手动启用
         }
     }
 }
@@ -59,6 +62,7 @@ impl VisibleApps {
             AppType::Gemini => self.gemini,
             AppType::OpenCode => self.opencode,
             AppType::OpenClaw => self.openclaw,
+            AppType::Hermes => self.hermes,
         }
     }
 }
@@ -175,6 +179,8 @@ pub struct AppSettings {
     pub show_in_tray: bool,
     #[serde(default = "default_minimize_to_tray_on_close")]
     pub minimize_to_tray_on_close: bool,
+    #[serde(default)]
+    pub use_app_window_controls: bool,
     /// 是否启用 Claude 插件联动
     #[serde(default)]
     pub enable_claude_plugin_integration: bool,
@@ -205,6 +211,12 @@ pub struct AppSettings {
     /// User has confirmed the failover toggle first-run notice
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub failover_confirmed: Option<bool>,
+    /// User has confirmed the first-run welcome notice
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_run_notice_confirmed: Option<bool>,
+    /// User has confirmed the common config first-run notice
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub common_config_confirmed: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub language: Option<String>,
 
@@ -223,6 +235,8 @@ pub struct AppSettings {
     pub opencode_config_dir: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub openclaw_config_dir: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hermes_config_dir: Option<String>,
 
     // ===== 当前供应商 ID（设备级）=====
     /// 当前 Claude 供应商 ID（本地存储，优先于数据库 is_current）
@@ -240,11 +254,17 @@ pub struct AppSettings {
     /// 当前 OpenClaw 供应商 ID（本地存储，对 OpenClaw 可能无意义，但保持结构一致）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub current_provider_openclaw: Option<String>,
+    /// 当前 Hermes 供应商 ID（本地存储，保持结构一致）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_provider_hermes: Option<String>,
 
     // ===== Skill 同步设置 =====
     /// Skill 同步方式：auto（默认，优先 symlink）、symlink、copy
     #[serde(default)]
     pub skill_sync_method: SyncMethod,
+    /// Skill 存储位置：cc_switch（默认）或 unified（~/.agents/skills/）
+    #[serde(default)]
+    pub skill_storage_location: SkillStorageLocation,
 
     // ===== WebDAV 同步设置 =====
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -264,7 +284,7 @@ pub struct AppSettings {
 
     // ===== 终端设置 =====
     /// 首选终端应用（可选，默认使用系统默认终端）
-    /// - macOS: "terminal" | "iterm2" | "warp" | "alacritty" | "kitty" | "ghostty"
+    /// - macOS: "terminal" | "iterm2" | "warp" | "alacritty" | "kitty" | "ghostty" | "wezterm" | "kaku"
     /// - Windows: "cmd" | "powershell" | "wt" (Windows Terminal)
     /// - Linux: "gnome-terminal" | "konsole" | "xfce4-terminal" | "alacritty" | "kitty" | "ghostty"
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -284,6 +304,7 @@ impl Default for AppSettings {
         Self {
             show_in_tray: true,
             minimize_to_tray_on_close: true,
+            use_app_window_controls: false,
             enable_claude_plugin_integration: false,
             skip_claude_onboarding: false,
             launch_on_startup: false,
@@ -294,6 +315,8 @@ impl Default for AppSettings {
             stream_check_confirmed: None,
             enable_failover_toggle: false,
             failover_confirmed: None,
+            first_run_notice_confirmed: None,
+            common_config_confirmed: None,
             language: None,
             visible_apps: None,
             claude_config_dir: None,
@@ -301,12 +324,15 @@ impl Default for AppSettings {
             gemini_config_dir: None,
             opencode_config_dir: None,
             openclaw_config_dir: None,
+            hermes_config_dir: None,
             current_provider_claude: None,
             current_provider_codex: None,
             current_provider_gemini: None,
             current_provider_opencode: None,
             current_provider_openclaw: None,
+            current_provider_hermes: None,
             skill_sync_method: SyncMethod::default(),
+            skill_storage_location: SkillStorageLocation::default(),
             webdav_sync: None,
             webdav_backup: None,
             backup_interval_hours: None,
@@ -357,6 +383,13 @@ impl AppSettings {
 
         self.openclaw_config_dir = self
             .openclaw_config_dir
+            .as_ref()
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
+
+        self.hermes_config_dir = self
+            .hermes_config_dir
             .as_ref()
             .map(|s| s.trim())
             .filter(|s| !s.is_empty())
@@ -562,6 +595,14 @@ pub fn get_openclaw_override_dir() -> Option<PathBuf> {
         .map(|p| resolve_override_path(p))
 }
 
+pub fn get_hermes_override_dir() -> Option<PathBuf> {
+    let settings = settings_store().read().ok()?;
+    settings
+        .hermes_config_dir
+        .as_ref()
+        .map(|p| resolve_override_path(p))
+}
+
 // ===== 当前供应商管理函数 =====
 
 /// 获取指定应用类型的当前供应商 ID（从本地 settings 读取）
@@ -576,6 +617,7 @@ pub fn get_current_provider(app_type: &AppType) -> Option<String> {
         AppType::Gemini => settings.current_provider_gemini.clone(),
         AppType::OpenCode => settings.current_provider_opencode.clone(),
         AppType::OpenClaw => settings.current_provider_openclaw.clone(),
+        AppType::Hermes => settings.current_provider_hermes.clone(),
     }
 }
 
@@ -591,6 +633,7 @@ pub fn set_current_provider(app_type: &AppType, id: Option<&str>) -> Result<(), 
         AppType::Gemini => settings.current_provider_gemini = id_owned.clone(),
         AppType::OpenCode => settings.current_provider_opencode = id_owned.clone(),
         AppType::OpenClaw => settings.current_provider_openclaw = id_owned.clone(),
+        AppType::Hermes => settings.current_provider_hermes = id_owned.clone(),
     })
 }
 
@@ -640,6 +683,26 @@ pub fn get_skill_sync_method() -> SyncMethod {
             e.into_inner()
         })
         .skill_sync_method
+}
+
+// ===== Skill 存储位置管理函数 =====
+
+/// 获取 Skill 存储位置配置
+pub fn get_skill_storage_location() -> SkillStorageLocation {
+    settings_store()
+        .read()
+        .unwrap_or_else(|e| {
+            log::warn!("设置锁已毒化，使用恢复值: {e}");
+            e.into_inner()
+        })
+        .skill_storage_location
+}
+
+/// 设置 Skill 存储位置
+pub fn set_skill_storage_location(location: SkillStorageLocation) -> Result<(), AppError> {
+    mutate_settings(|s| {
+        s.skill_storage_location = location;
+    })
 }
 
 // ===== 备份策略管理函数 =====

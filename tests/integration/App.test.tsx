@@ -31,24 +31,32 @@ vi.mock("@/components/providers/ProviderList", () => ({
     onConfigureUsage,
     onOpenWebsite,
     onCreate,
+    configurationLocked,
   }: any) => (
     <div>
       <div data-testid="provider-list">{JSON.stringify(providers)}</div>
       <div data-testid="current-provider">{currentProviderId}</div>
+      {configurationLocked && <div data-testid="configuration-locked" />}
       <button onClick={() => onSwitch(providers[currentProviderId])}>
         switch
       </button>
       <button onClick={() => onEdit(providers[currentProviderId])}>edit</button>
-      <button onClick={() => onDuplicate(providers[currentProviderId])}>
-        duplicate
-      </button>
-      <button onClick={() => onConfigureUsage(providers[currentProviderId])}>
-        usage
-      </button>
+      {onConfigureUsage && (
+        <button onClick={() => onConfigureUsage(providers[currentProviderId])}>
+          usage
+        </button>
+      )}
+      {!configurationLocked && (
+        <>
+          <button onClick={() => onDuplicate(providers[currentProviderId])}>
+            duplicate
+          </button>
+          <button onClick={() => onCreate?.()}>create</button>
+        </>
+      )}
       <button onClick={() => onOpenWebsite("https://example.com")}>
         open-website
       </button>
-      <button onClick={() => onCreate?.()}>create</button>
     </div>
   ),
 }));
@@ -118,12 +126,18 @@ vi.mock("@/components/ConfirmDialog", () => ({
 }));
 
 vi.mock("@/components/AppSwitcher", () => ({
-  AppSwitcher: ({ activeApp, onSwitch }: any) => (
+  AppSwitcher: ({ activeApp, onSwitch, visibleApps }: any) => (
     <div data-testid="app-switcher">
       <span>{activeApp}</span>
-      <button onClick={() => onSwitch("claude")}>switch-claude</button>
-      <button onClick={() => onSwitch("codex")}>switch-codex</button>
-      <button onClick={() => onSwitch("openclaw")}>switch-openclaw</button>
+      {visibleApps?.claude !== false && (
+        <button onClick={() => onSwitch("claude")}>switch-claude</button>
+      )}
+      {visibleApps?.codex !== false && (
+        <button onClick={() => onSwitch("codex")}>switch-codex</button>
+      )}
+      {visibleApps?.openclaw !== false && (
+        <button onClick={() => onSwitch("openclaw")}>switch-openclaw</button>
+      )}
     </div>
   ),
 }));
@@ -158,41 +172,38 @@ const renderApp = (AppComponent: ComponentType) => {
 
 describe("App integration with MSW", () => {
   beforeEach(() => {
+    localStorage.clear();
     resetProviderState();
     toastSuccessMock.mockReset();
     toastErrorMock.mockReset();
   });
 
-  it("covers basic provider flows via real hooks", async () => {
+  it("loads KeyFerry-managed providers, allows editing tools, and locks manual creation", async () => {
     const { default: App } = await import("@/App");
     renderApp(App);
 
     await waitFor(() =>
       expect(screen.getByTestId("provider-list").textContent).toContain(
-        "claude-1",
+        "universal-claude-keyferry-newapi",
       ),
+    );
+    expect(screen.getByTestId("provider-list").textContent).toContain(
+      "default",
     );
 
     fireEvent.click(screen.getByText("switch-codex"));
     await waitFor(() =>
       expect(screen.getByTestId("provider-list").textContent).toContain(
-        "codex-1",
+        "universal-codex-keyferry-newapi",
       ),
     );
 
+    fireEvent.click(screen.getByText("switch"));
+    fireEvent.click(screen.getByText("open-website"));
     fireEvent.click(screen.getByText("usage"));
     expect(screen.getByTestId("usage-modal")).toBeInTheDocument();
     fireEvent.click(screen.getByText("save-script"));
     fireEvent.click(screen.getByText("close-usage"));
-
-    fireEvent.click(screen.getByText("create"));
-    expect(screen.getByTestId("add-provider-dialog")).toBeInTheDocument();
-    fireEvent.click(screen.getByText("confirm-add"));
-    await waitFor(() =>
-      expect(screen.getByTestId("provider-list").textContent).toMatch(
-        /New codex Provider/,
-      ),
-    );
 
     fireEvent.click(screen.getByText("edit"));
     expect(screen.getByTestId("edit-provider-dialog")).toBeInTheDocument();
@@ -203,13 +214,12 @@ describe("App integration with MSW", () => {
       ),
     );
 
-    fireEvent.click(screen.getByText("switch"));
-    fireEvent.click(screen.getByText("duplicate"));
-    await waitFor(() =>
-      expect(screen.getByTestId("provider-list").textContent).toMatch(/copy/),
-    );
-
-    fireEvent.click(screen.getByText("open-website"));
+    expect(screen.getByTestId("configuration-locked")).toBeInTheDocument();
+    expect(screen.getByText("usage")).toBeInTheDocument();
+    expect(screen.queryByText("create")).not.toBeInTheDocument();
+    expect(screen.getByText("edit")).toBeInTheDocument();
+    expect(screen.queryByText("duplicate")).not.toBeInTheDocument();
+    expect(screen.getByText("switch-openclaw")).toBeInTheDocument();
 
     emitTauriEvent("provider-switched", {
       appType: "codex",
@@ -217,7 +227,6 @@ describe("App integration with MSW", () => {
     });
 
     expect(toastErrorMock).not.toHaveBeenCalled();
-    expect(toastSuccessMock).toHaveBeenCalled();
   });
 
   it("shows toast when auto sync fails in background", async () => {
@@ -226,7 +235,7 @@ describe("App integration with MSW", () => {
 
     await waitFor(() =>
       expect(screen.getByTestId("provider-list").textContent).toContain(
-        "claude-1",
+        "universal-claude-keyferry-newapi",
       ),
     );
 
@@ -241,8 +250,21 @@ describe("App integration with MSW", () => {
     });
   });
 
-  it("duplicates openclaw providers with a generated key that avoids live-only ids", async () => {
+  it("shows OpenClaw when KeyFerry manages it and hides manual OpenClaw providers", async () => {
     setProviders("openclaw", {
+      "universal-openclaw-keyferry-newapi": {
+        id: "universal-openclaw-keyferry-newapi",
+        name: "钥渡 KeyFerry",
+        settingsConfig: {
+          baseUrl: "https://x.sozdata.com/v1",
+          apiKey: "mock-keyferry-token",
+          api: "openai-completions",
+          models: [{ id: "gpt-5.4", name: "gpt-5.4" }],
+        },
+        category: "aggregator",
+        sortIndex: 1,
+        createdAt: Date.now(),
+      },
       deepseek: {
         id: "deepseek",
         name: "DeepSeek",
@@ -263,29 +285,39 @@ describe("App integration with MSW", () => {
     const { default: App } = await import("@/App");
     renderApp(App);
 
-    fireEvent.click(screen.getByText("switch-openclaw"));
-
     await waitFor(() =>
       expect(screen.getByTestId("provider-list").textContent).toContain(
-        "deepseek",
+        "universal-claude-keyferry-newapi",
       ),
     );
 
-    fireEvent.click(screen.getByText("duplicate"));
-
-    await waitFor(() => {
-      const providerList = screen.getByTestId("provider-list").textContent;
-      expect(providerList).toContain("deepseek-copy-2");
-      expect(providerList).toContain("DeepSeek copy");
-    });
-
-    expect(toastErrorMock).not.toHaveBeenCalledWith(
-      expect.stringContaining("Provider key is required for openclaw"),
+    expect(screen.getByText("switch-openclaw")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("switch-openclaw"));
+    await waitFor(() =>
+      expect(screen.getByTestId("provider-list").textContent).toContain(
+        "universal-openclaw-keyferry-newapi",
+      ),
+    );
+    expect(screen.getByTestId("provider-list").textContent).not.toContain(
+      "deepseek",
     );
   });
 
-  it("shows toast when duplicate cannot load live provider ids", async () => {
+  it("does not expose duplicate flow when manual configuration is locked", async () => {
     setProviders("openclaw", {
+      "universal-openclaw-keyferry-newapi": {
+        id: "universal-openclaw-keyferry-newapi",
+        name: "钥渡 KeyFerry",
+        settingsConfig: {
+          baseUrl: "https://x.sozdata.com/v1",
+          apiKey: "mock-keyferry-token",
+          api: "openai-completions",
+          models: [{ id: "gpt-5.4", name: "gpt-5.4" }],
+        },
+        category: "aggregator",
+        sortIndex: 1,
+        createdAt: Date.now(),
+      },
       deepseek: {
         id: "deepseek",
         name: "DeepSeek",
@@ -309,24 +341,16 @@ describe("App integration with MSW", () => {
     const { default: App } = await import("@/App");
     renderApp(App);
 
-    fireEvent.click(screen.getByText("switch-openclaw"));
-
     await waitFor(() =>
       expect(screen.getByTestId("provider-list").textContent).toContain(
-        "deepseek",
+        "universal-claude-keyferry-newapi",
       ),
     );
 
-    fireEvent.click(screen.getByText("duplicate"));
-
-    await waitFor(() => {
-      expect(toastErrorMock).toHaveBeenCalledWith(
-        expect.stringContaining("读取配置中的供应商标识失败"),
-      );
-    });
-
-    expect(screen.getByTestId("provider-list").textContent).not.toContain(
-      "deepseek-copy",
+    expect(screen.queryByText("duplicate")).not.toBeInTheDocument();
+    expect(liveIdsSpy).not.toHaveBeenCalled();
+    expect(toastErrorMock).not.toHaveBeenCalledWith(
+      expect.stringContaining("读取配置中的供应商标识失败"),
     );
 
     liveIdsSpy.mockRestore();

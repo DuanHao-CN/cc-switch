@@ -1,3 +1,4 @@
+use super::keyferry::{keyferry_config_locked_message, keyferry_only_mode};
 use crate::deeplink::{
     import_mcp_from_deeplink, import_prompt_from_deeplink, import_provider_from_deeplink,
     import_skill_from_deeplink, parse_deeplink_url, DeepLinkImportRequest,
@@ -28,6 +29,10 @@ pub fn import_from_deeplink(
     state: State<AppState>,
     request: DeepLinkImportRequest,
 ) -> Result<String, String> {
+    if keyferry_only_mode() {
+        return Err(keyferry_config_locked_message().to_string());
+    }
+
     log::info!(
         "Importing provider from deep link: {:?} for app {:?}",
         request.name,
@@ -51,6 +56,9 @@ pub async fn import_from_deeplink_unified(
 
     match request.resource.as_str() {
         "provider" => {
+            if keyferry_only_mode() {
+                return Err(keyferry_config_locked_message().to_string());
+            }
             let provider_id =
                 import_provider_from_deeplink(&state, request).map_err(|e| e.to_string())?;
             Ok(serde_json::json!({

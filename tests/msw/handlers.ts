@@ -38,15 +38,43 @@ const withJson = async <T>(request: Request): Promise<T> => {
 };
 
 const success = <T>(payload: T) => HttpResponse.json(payload as any);
+const keyferryChildProviderId = (app: AppId) =>
+  `universal-${app}-keyferry-newapi`;
+const filterKeyFerryProviders = (
+  app: AppId,
+  providers: Record<string, Provider>,
+) =>
+  Object.fromEntries(
+    Object.entries(providers).filter(([id]) => {
+      if (id === keyferryChildProviderId(app)) return true;
+      return (
+        (app === "claude" || app === "codex" || app === "gemini") &&
+        id === "default"
+      );
+    }),
+  ) as Record<string, Provider>;
 
 export const handlers = [
   http.post(`${TAURI_ENDPOINT}/get_migration_result`, () => success(false)),
   http.post(`${TAURI_ENDPOINT}/get_skills_migration_result`, () =>
     success(null),
   ),
+  http.post(`${TAURI_ENDPOINT}/keyferry_status`, () =>
+    success({
+      configured: true,
+      providerId: "keyferry-newapi",
+      providerName: "钥渡 KeyFerry",
+      baseUrl: "https://x.sozdata.com",
+      username: "keyferry-user",
+      tokenName: "cc-switch",
+      configuredAt: Date.now(),
+      configuredApps: ["claude", "codex", "gemini", "opencode", "openclaw"],
+    }),
+  ),
+  http.post(`${TAURI_ENDPOINT}/keyferry_logout`, () => success(true)),
   http.post(`${TAURI_ENDPOINT}/get_providers`, async ({ request }) => {
     const { app } = await withJson<{ app: AppId }>(request);
-    return success(getProviders(app));
+    return success(filterKeyFerryProviders(app, getProviders(app)));
   }),
 
   http.post(`${TAURI_ENDPOINT}/get_current_provider`, async ({ request }) => {

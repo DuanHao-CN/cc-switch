@@ -65,6 +65,25 @@ impl Provider {
             in_failover_queue: false,
         }
     }
+
+    pub fn is_codex_oauth(&self) -> bool {
+        self.meta.as_ref().and_then(|m| m.provider_type.as_deref()) == Some("codex_oauth")
+    }
+
+    pub fn codex_fast_mode_enabled(&self) -> bool {
+        self.meta
+            .as_ref()
+            .map(|m| m.codex_fast_mode_enabled())
+            .unwrap_or(false)
+    }
+
+    pub fn has_usage_script_enabled(&self) -> bool {
+        self.meta
+            .as_ref()
+            .and_then(|m| m.usage_script.as_ref())
+            .map(|s| s.enabled)
+            .unwrap_or(false)
+    }
 }
 
 /// 供应商管理器
@@ -106,6 +125,10 @@ pub struct UsageScript {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(rename = "autoQueryInterval")]
     pub auto_query_interval: Option<u64>,
+    /// Coding Plan 供应商标识（如 "kimi", "zhipu", "minimax"）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "codingPlanProvider")]
+    pub coding_plan_provider: Option<String>,
 }
 
 /// 用量数据
@@ -166,29 +189,6 @@ pub struct ProviderTestConfig {
     /// 最大重试次数
     #[serde(rename = "maxRetries", skip_serializing_if = "Option::is_none")]
     pub max_retries: Option<u32>,
-}
-
-/// 供应商单独的代理配置
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct ProviderProxyConfig {
-    /// 是否启用单独配置（false 时使用全局/系统代理）
-    #[serde(default)]
-    pub enabled: bool,
-    /// 代理类型：http, https, socks5
-    #[serde(rename = "proxyType", skip_serializing_if = "Option::is_none")]
-    pub proxy_type: Option<String>,
-    /// 代理主机
-    #[serde(rename = "proxyHost", skip_serializing_if = "Option::is_none")]
-    pub proxy_host: Option<String>,
-    /// 代理端口
-    #[serde(rename = "proxyPort", skip_serializing_if = "Option::is_none")]
-    pub proxy_port: Option<u16>,
-    /// 代理用户名（可选）
-    #[serde(rename = "proxyUsername", skip_serializing_if = "Option::is_none")]
-    pub proxy_username: Option<String>,
-    /// 代理密码（可选）
-    #[serde(rename = "proxyPassword", skip_serializing_if = "Option::is_none")]
-    pub proxy_password: Option<String>,
 }
 
 /// 认证绑定来源
@@ -258,9 +258,6 @@ pub struct ProviderMeta {
     /// 供应商单独的模型测试配置
     #[serde(rename = "testConfig", skip_serializing_if = "Option::is_none")]
     pub test_config: Option<ProviderTestConfig>,
-    /// 供应商单独的代理配置
-    #[serde(rename = "proxyConfig", skip_serializing_if = "Option::is_none")]
-    pub proxy_config: Option<ProviderProxyConfig>,
     /// Claude API 格式（仅 Claude 供应商使用）
     /// - "anthropic": 原生 Anthropic Messages API，直接透传
     /// - "openai_chat": OpenAI Chat Completions 格式，需要转换
@@ -278,11 +275,15 @@ pub struct ProviderMeta {
     /// 是否将 base_url 视为完整 API 端点（不拼接 endpoint 路径）
     #[serde(rename = "isFullUrl", skip_serializing_if = "Option::is_none")]
     pub is_full_url: Option<bool>,
-    /// Prompt cache key for OpenAI-compatible endpoints.
-    /// When set, injected into converted requests to improve cache hit rate.
-    /// If not set, provider ID is used automatically during format conversion.
+    /// Prompt cache key for OpenAI Responses-compatible endpoints.
+    /// When set, injected into converted Responses requests to improve cache hit rate.
+    /// If not set, Codex OAuth uses the current session ID; other Claude -> Responses
+    /// conversions fall back to provider ID.
     #[serde(rename = "promptCacheKey", skip_serializing_if = "Option::is_none")]
     pub prompt_cache_key: Option<String>,
+    /// Codex OAuth FAST mode: inject `service_tier = "priority"` for ChatGPT Codex requests.
+    #[serde(rename = "codexFastMode", skip_serializing_if = "Option::is_none")]
+    pub codex_fast_mode: Option<bool>,
     /// 累加模式应用中，该 provider 是否已写入 live config。
     /// `None` 表示旧数据/未知状态，`Some(false)` 表示明确仅存在于数据库中。
     #[serde(rename = "liveConfigManaged", skip_serializing_if = "Option::is_none")]
@@ -295,9 +296,33 @@ pub struct ProviderMeta {
     /// 用于多账号支持，关联到特定的 GitHub 账号
     #[serde(rename = "githubAccountId", skip_serializing_if = "Option::is_none")]
     pub github_account_id: Option<String>,
+    /// KeyFerry 登录用户名（仅 KeyFerry 自动配置供应商使用）
+    #[serde(rename = "keyferryUsername", skip_serializing_if = "Option::is_none")]
+    pub keyferry_username: Option<String>,
+    /// KeyFerry / NewAPI 用户 ID（仅用于账户状态展示）
+    #[serde(rename = "keyferryUserId", skip_serializing_if = "Option::is_none")]
+    pub keyferry_user_id: Option<String>,
+    /// KeyFerry 使用的 NewAPI Token ID
+    #[serde(rename = "keyferryTokenId", skip_serializing_if = "Option::is_none")]
+    pub keyferry_token_id: Option<i64>,
+    /// KeyFerry 使用的 NewAPI Token 名称
+    #[serde(rename = "keyferryTokenName", skip_serializing_if = "Option::is_none")]
+    pub keyferry_token_name: Option<String>,
+    /// KeyFerry 最近一次配置完成时间戳（毫秒）
+    #[serde(
+        rename = "keyferryConfiguredAt",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub keyferry_configured_at: Option<i64>,
 }
 
 impl ProviderMeta {
+    /// Codex OAuth FAST mode 是否启用。默认关闭，因为 `service_tier="priority"`
+    /// 会按更高速率消耗 ChatGPT 订阅配额，用户需显式开启以换取更低延迟。
+    pub fn codex_fast_mode_enabled(&self) -> bool {
+        self.codex_fast_mode.unwrap_or(false)
+    }
+
     /// 解析指定托管认证供应商绑定的账号 ID。
     ///
     /// 新版优先读取 authBinding，旧版继续兼容 githubAccountId。
@@ -338,6 +363,10 @@ pub struct UniversalProviderApps {
     pub codex: bool,
     #[serde(default)]
     pub gemini: bool,
+    #[serde(default)]
+    pub opencode: bool,
+    #[serde(default)]
+    pub openclaw: bool,
 }
 
 /// Claude 模型配置
@@ -513,6 +542,31 @@ impl UniversalProvider {
         })
     }
 
+    fn openai_compatible_base_url(&self) -> String {
+        // OpenAI-compatible clients generally expect a /v1 endpoint when the
+        // user supplied only the gateway origin, but custom routed paths should
+        // be preserved as-is.
+        let base_trimmed = self.base_url.trim_end_matches('/');
+        let origin_only = match base_trimmed.split_once("://") {
+            Some((_scheme, rest)) => !rest.contains('/'),
+            None => !base_trimmed.contains('/'),
+        };
+
+        if base_trimmed.ends_with("/v1") {
+            base_trimmed.to_string()
+        } else if origin_only {
+            format!("{base_trimmed}/v1")
+        } else {
+            base_trimmed.to_string()
+        }
+    }
+
+    fn additive_provider_meta(&self) -> Option<ProviderMeta> {
+        let mut meta = self.meta.clone().unwrap_or_default();
+        meta.live_config_managed = Some(true);
+        Some(meta)
+    }
+
     /// 生成 Codex 供应商配置
     pub fn to_codex_provider(&self) -> Option<Provider> {
         if !self.apps.codex {
@@ -527,19 +581,7 @@ impl UniversalProvider {
             .and_then(|m| m.reasoning_effort.clone())
             .unwrap_or_else(|| "high".to_string());
 
-        // Codex/OpenAI 的 base_url 既可能是纯 origin（需要补 /v1），也可能包含自定义前缀（不应强行补版本）
-        let base_trimmed = self.base_url.trim_end_matches('/');
-        let origin_only = match base_trimmed.split_once("://") {
-            Some((_scheme, rest)) => !rest.contains('/'),
-            None => !base_trimmed.contains('/'),
-        };
-        let codex_base_url = if base_trimmed.ends_with("/v1") {
-            base_trimmed.to_string()
-        } else if origin_only {
-            format!("{base_trimmed}/v1")
-        } else {
-            base_trimmed.to_string()
-        };
+        let codex_base_url = self.openai_compatible_base_url();
 
         // 生成 Codex 的 config.toml 内容
         let config_toml = format!(
@@ -607,6 +649,88 @@ requires_openai_auth = true"#
             sort_index: self.sort_index,
             notes: self.notes.clone(),
             meta: self.meta.clone(),
+            icon: self.icon.clone(),
+            icon_color: self.icon_color.clone(),
+            in_failover_queue: false,
+        })
+    }
+
+    /// 生成 OpenCode 供应商配置
+    pub fn to_opencode_provider(&self) -> Option<Provider> {
+        if !self.apps.opencode {
+            return None;
+        }
+
+        let model = self
+            .models
+            .codex
+            .as_ref()
+            .and_then(|m| m.model.clone())
+            .unwrap_or_else(|| "gpt-5.4".to_string());
+        let mut models = serde_json::Map::new();
+        models.insert(model.clone(), serde_json::json!({ "name": model }));
+
+        let settings_config = serde_json::json!({
+            "npm": "@ai-sdk/openai-compatible",
+            "name": self.name.clone(),
+            "options": {
+                "baseURL": self.openai_compatible_base_url(),
+                "apiKey": self.api_key.clone(),
+            },
+            "models": Value::Object(models),
+        });
+
+        Some(Provider {
+            id: format!("universal-opencode-{}", self.id),
+            name: self.name.clone(),
+            settings_config,
+            website_url: self.website_url.clone(),
+            category: Some("aggregator".to_string()),
+            created_at: self.created_at,
+            sort_index: self.sort_index,
+            notes: self.notes.clone(),
+            meta: self.additive_provider_meta(),
+            icon: self.icon.clone(),
+            icon_color: self.icon_color.clone(),
+            in_failover_queue: false,
+        })
+    }
+
+    /// 生成 OpenClaw 供应商配置
+    pub fn to_openclaw_provider(&self) -> Option<Provider> {
+        if !self.apps.openclaw {
+            return None;
+        }
+
+        let model = self
+            .models
+            .codex
+            .as_ref()
+            .and_then(|m| m.model.clone())
+            .unwrap_or_else(|| "gpt-5.4".to_string());
+
+        let settings_config = serde_json::json!({
+            "baseUrl": self.openai_compatible_base_url(),
+            "apiKey": self.api_key.clone(),
+            "api": "openai-completions",
+            "models": [
+                {
+                    "id": model.clone(),
+                    "name": model,
+                }
+            ],
+        });
+
+        Some(Provider {
+            id: format!("universal-openclaw-{}", self.id),
+            name: self.name.clone(),
+            settings_config,
+            website_url: self.website_url.clone(),
+            category: Some("aggregator".to_string()),
+            created_at: self.created_at,
+            sort_index: self.sort_index,
+            notes: self.notes.clone(),
+            meta: self.additive_provider_meta(),
             icon: self.icon.clone(),
             icon_color: self.icon_color.clone(),
             in_failover_queue: false,
@@ -959,6 +1083,99 @@ mod tests {
                 .pointer("/env/GEMINI_MODEL")
                 .and_then(|item| item.as_str()),
             Some("gemini-custom")
+        );
+    }
+
+    #[test]
+    fn universal_provider_to_opencode_provider_uses_openai_compatible_config() {
+        let mut universal = UniversalProvider::new(
+            "u1".to_string(),
+            "Universal".to_string(),
+            "newapi".to_string(),
+            "https://api.example.com".to_string(),
+            "api-key".to_string(),
+        );
+        universal.apps.opencode = true;
+        universal.models.codex = Some(CodexModelConfig {
+            model: Some("gpt-custom".to_string()),
+            reasoning_effort: Some("high".to_string()),
+        });
+
+        let provider = universal.to_opencode_provider().expect("opencode provider");
+
+        assert_eq!(provider.id, "universal-opencode-u1");
+        assert_eq!(
+            provider
+                .settings_config
+                .pointer("/options/baseURL")
+                .and_then(|item| item.as_str()),
+            Some("https://api.example.com/v1")
+        );
+        assert_eq!(
+            provider
+                .settings_config
+                .pointer("/options/apiKey")
+                .and_then(|item| item.as_str()),
+            Some("api-key")
+        );
+        assert!(provider
+            .settings_config
+            .pointer("/models/gpt-custom")
+            .is_some());
+        assert_eq!(
+            provider
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.live_config_managed),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn universal_provider_to_openclaw_provider_uses_openai_compatible_config() {
+        let mut universal = UniversalProvider::new(
+            "u1".to_string(),
+            "Universal".to_string(),
+            "newapi".to_string(),
+            "https://api.example.com".to_string(),
+            "api-key".to_string(),
+        );
+        universal.apps.openclaw = true;
+        universal.models.codex = Some(CodexModelConfig {
+            model: Some("gpt-custom".to_string()),
+            reasoning_effort: Some("high".to_string()),
+        });
+
+        let provider = universal.to_openclaw_provider().expect("openclaw provider");
+
+        assert_eq!(provider.id, "universal-openclaw-u1");
+        assert_eq!(
+            provider
+                .settings_config
+                .pointer("/baseUrl")
+                .and_then(|item| item.as_str()),
+            Some("https://api.example.com/v1")
+        );
+        assert_eq!(
+            provider
+                .settings_config
+                .pointer("/apiKey")
+                .and_then(|item| item.as_str()),
+            Some("api-key")
+        );
+        assert_eq!(
+            provider
+                .settings_config
+                .pointer("/models/0/id")
+                .and_then(|item| item.as_str()),
+            Some("gpt-custom")
+        );
+        assert_eq!(
+            provider
+                .meta
+                .as_ref()
+                .and_then(|meta| meta.live_config_managed),
+            Some(true)
         );
     }
 

@@ -50,6 +50,8 @@ export function UniversalProviderFormModal({
   const [claudeEnabled, setClaudeEnabled] = useState(true);
   const [codexEnabled, setCodexEnabled] = useState(true);
   const [geminiEnabled, setGeminiEnabled] = useState(true);
+  const [opencodeEnabled, setOpencodeEnabled] = useState(false);
+  const [openclawEnabled, setOpenclawEnabled] = useState(false);
 
   // 模型配置
   const [models, setModels] = useState<UniversalProviderModels>({});
@@ -71,6 +73,8 @@ export function UniversalProviderFormModal({
       setClaudeEnabled(editingProvider.apps.claude);
       setCodexEnabled(editingProvider.apps.codex);
       setGeminiEnabled(editingProvider.apps.gemini);
+      setOpencodeEnabled(editingProvider.apps.opencode ?? false);
+      setOpenclawEnabled(editingProvider.apps.openclaw ?? false);
       setModels(editingProvider.models || {});
 
       // 尝试匹配预设
@@ -90,6 +94,8 @@ export function UniversalProviderFormModal({
       setClaudeEnabled(defaultPreset.defaultApps.claude);
       setCodexEnabled(defaultPreset.defaultApps.codex);
       setGeminiEnabled(defaultPreset.defaultApps.gemini);
+      setOpencodeEnabled(defaultPreset.defaultApps.opencode);
+      setOpenclawEnabled(defaultPreset.defaultApps.openclaw);
       setModels(JSON.parse(JSON.stringify(defaultPreset.defaultModels)));
     }
   }, [editingProvider, initialPreset, isOpen]);
@@ -103,6 +109,8 @@ export function UniversalProviderFormModal({
         setClaudeEnabled(preset.defaultApps.claude);
         setCodexEnabled(preset.defaultApps.codex);
         setGeminiEnabled(preset.defaultApps.gemini);
+        setOpencodeEnabled(preset.defaultApps.opencode);
+        setOpenclawEnabled(preset.defaultApps.openclaw);
         setModels(JSON.parse(JSON.stringify(preset.defaultModels)));
       }
     },
@@ -200,6 +208,8 @@ requires_openai_auth = true`;
             claude: claudeEnabled,
             codex: codexEnabled,
             gemini: geminiEnabled,
+            opencode: opencodeEnabled,
+            openclaw: openclawEnabled,
           },
           models,
         }
@@ -217,6 +227,8 @@ requires_openai_auth = true`;
         claude: claudeEnabled,
         codex: codexEnabled,
         gemini: geminiEnabled,
+        opencode: opencodeEnabled,
+        openclaw: openclawEnabled,
       };
       provider.models = models;
       provider.websiteUrl = websiteUrl.trim() || undefined;
@@ -235,6 +247,8 @@ requires_openai_auth = true`;
     claudeEnabled,
     codexEnabled,
     geminiEnabled,
+    opencodeEnabled,
+    openclawEnabled,
     models,
     selectedPreset,
     onSave,
@@ -259,6 +273,8 @@ requires_openai_auth = true`;
             claude: claudeEnabled,
             codex: codexEnabled,
             gemini: geminiEnabled,
+            opencode: opencodeEnabled,
+            openclaw: openclawEnabled,
           },
           models,
         }
@@ -276,6 +292,8 @@ requires_openai_auth = true`;
         claude: claudeEnabled,
         codex: codexEnabled,
         gemini: geminiEnabled,
+        opencode: opencodeEnabled,
+        openclaw: openclawEnabled,
       };
       provider.models = models;
       provider.websiteUrl = websiteUrl.trim() || undefined;
@@ -293,6 +311,8 @@ requires_openai_auth = true`;
     claudeEnabled,
     codexEnabled,
     geminiEnabled,
+    opencodeEnabled,
+    openclawEnabled,
     models,
     selectedPreset,
   ]);
@@ -509,6 +529,26 @@ requires_openai_auth = true`;
               <Switch
                 checked={geminiEnabled}
                 onCheckedChange={setGeminiEnabled}
+              />
+            </div>
+            <div className="flex items-center justify-between rounded-lg border p-3">
+              <div className="flex items-center gap-2">
+                <ProviderIcon icon="opencode" name="OpenCode" size={20} />
+                <span className="font-medium">OpenCode</span>
+              </div>
+              <Switch
+                checked={opencodeEnabled}
+                onCheckedChange={setOpencodeEnabled}
+              />
+            </div>
+            <div className="flex items-center justify-between rounded-lg border p-3">
+              <div className="flex items-center gap-2">
+                <ProviderIcon icon="openclaw" name="OpenClaw" size={20} />
+                <span className="font-medium">OpenClaw</span>
+              </div>
+              <Switch
+                checked={openclawEnabled}
+                onCheckedChange={setOpenclawEnabled}
               />
             </div>
           </div>

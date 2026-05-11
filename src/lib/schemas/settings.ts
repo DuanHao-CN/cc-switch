@@ -21,6 +21,8 @@ export const settingsSchema = z.object({
   claudeConfigDir: directorySchema.nullable().optional(),
   codexConfigDir: directorySchema.nullable().optional(),
   geminiConfigDir: directorySchema.nullable().optional(),
+  opencodeConfigDir: directorySchema.nullable().optional(),
+  openclawConfigDir: directorySchema.nullable().optional(),
 
   // 当前供应商 ID（设备级）
   currentProviderClaude: z.string().optional(),
@@ -29,6 +31,7 @@ export const settingsSchema = z.object({
 
   // Skill 同步设置
   skillSyncMethod: z.enum(["auto", "symlink", "copy"]).optional(),
+  skillStorageLocation: z.enum(["cc_switch", "unified"]).optional(),
 
   // WebDAV v2 同步设置（通过专用命令保存，schema 仅用于读取）
   webdavSync: z

@@ -4,12 +4,17 @@ import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Plus,
   Settings,
   ArrowLeft,
+  Minus,
+  Maximize2,
+  Minimize2,
+  X,
   Book,
+  Brain,
   Wrench,
   RefreshCw,
   History,
@@ -21,12 +26,16 @@ import {
   KeyRound,
   Shield,
   Cpu,
+  LayoutDashboard,
+  Loader2,
 } from "lucide-react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { Provider, VisibleApps } from "@/types";
 import type { EnvConflict } from "@/types/env";
 import { useProvidersQuery, useSettingsQuery } from "@/lib/query";
 import {
   providersApi,
+  keyferryApi,
   settingsApi,
   type AppId,
   type ProviderSwitchEvent,
@@ -34,13 +43,21 @@ import {
 import { checkAllEnvConflicts, checkEnvConflicts } from "@/lib/api/env";
 import { useProviderActions } from "@/hooks/useProviderActions";
 import { openclawKeys, useOpenClawHealth } from "@/hooks/useOpenClaw";
+import { hermesKeys, useOpenHermesWebUI } from "@/hooks/useHermes";
+import { hermesApi } from "@/lib/api/hermes";
 import { useProxyStatus } from "@/hooks/useProxyStatus";
 import { useAutoCompact } from "@/hooks/useAutoCompact";
+import { useUsageCacheBridge } from "@/hooks/useUsageCacheBridge";
 import { useLastValidValue } from "@/hooks/useLastValidValue";
 import { extractErrorMessage } from "@/utils/errorUtils";
 import { isTextEditableTarget } from "@/utils/domUtils";
 import { cn } from "@/lib/utils";
-import { isWindows, isLinux } from "@/lib/platform";
+import {
+  isWindows,
+  isLinux,
+  DRAG_REGION_ATTR,
+  DRAG_REGION_STYLE,
+} from "@/lib/platform";
 import { AppSwitcher } from "@/components/AppSwitcher";
 import { ProviderList } from "@/components/providers/ProviderList";
 import { AddProviderDialog } from "@/components/providers/AddProviderDialog";
@@ -57,8 +74,10 @@ import PromptPanel from "@/components/prompts/PromptPanel";
 import { SkillsPage } from "@/components/skills/SkillsPage";
 import UnifiedSkillsPanel from "@/components/skills/UnifiedSkillsPanel";
 import { DeepLinkImportDialog } from "@/components/DeepLinkImportDialog";
+import { FirstRunNoticeDialog } from "@/components/FirstRunNoticeDialog";
 import { AgentsPanel } from "@/components/agents/AgentsPanel";
 import { UniversalProviderPanel } from "@/components/universal";
+import { KeyFerryLoginPanel } from "@/components/keyferry/KeyFerryLoginPanel";
 import { McpIcon } from "@/components/BrandIcons";
 import { Button } from "@/components/ui/button";
 import { SessionManagerPage } from "@/components/sessions/SessionManagerPage";
@@ -71,6 +90,7 @@ import EnvPanel from "@/components/openclaw/EnvPanel";
 import ToolsPanel from "@/components/openclaw/ToolsPanel";
 import AgentsDefaultsPanel from "@/components/openclaw/AgentsDefaultsPanel";
 import OpenClawHealthBanner from "@/components/openclaw/OpenClawHealthBanner";
+import HermesMemoryPanel from "@/components/hermes/HermesMemoryPanel";
 
 type View =
   | "providers"
@@ -80,12 +100,14 @@ type View =
   | "skillsDiscovery"
   | "mcp"
   | "agents"
+  | "keyferry"
   | "universal"
   | "sessions"
   | "workspace"
   | "openclawEnv"
   | "openclawTools"
-  | "openclawAgents";
+  | "openclawAgents"
+  | "hermesMemory";
 
 interface WebDavSyncStatusUpdatedPayload {
   source?: string;
@@ -93,22 +115,49 @@ interface WebDavSyncStatusUpdatedPayload {
   error?: string;
 }
 
-const DRAG_BAR_HEIGHT = isWindows() || isLinux() ? 0 : 28; // px
+const DEFAULT_DRAG_BAR_HEIGHT = isWindows() || isLinux() ? 0 : 28; // px
 const HEADER_HEIGHT = 64; // px
-const CONTENT_TOP_OFFSET = DRAG_BAR_HEIGHT + HEADER_HEIGHT;
 
 const STORAGE_KEY = "cc-switch-last-app";
+const KEYFERRY_ONLY_MODE = true;
+const KEYFERRY_INITIAL_VISIBLE_APPS: VisibleApps = {
+  claude: true,
+  codex: true,
+  gemini: true,
+  opencode: true,
+  openclaw: true,
+  hermes: false,
+};
+const KEYFERRY_CORE_VISIBLE_APPS: Pick<
+  VisibleApps,
+  "claude" | "codex" | "gemini"
+> = {
+  claude: true,
+  codex: true,
+  gemini: true,
+};
+const KEYFERRY_BLOCKED_VIEWS: View[] = ["universal"];
+const OPENCLAW_ONLY_VIEWS: View[] = [
+  "workspace",
+  "openclawEnv",
+  "openclawTools",
+  "openclawAgents",
+];
 const VALID_APPS: AppId[] = [
   "claude",
   "codex",
   "gemini",
   "opencode",
   "openclaw",
+  "hermes",
 ];
 
 const getInitialApp = (): AppId => {
   const saved = localStorage.getItem(STORAGE_KEY) as AppId | null;
   if (saved && VALID_APPS.includes(saved)) {
+    if (KEYFERRY_ONLY_MODE && !KEYFERRY_INITIAL_VISIBLE_APPS[saved]) {
+      return "claude";
+    }
     return saved;
   }
   return "claude";
@@ -123,17 +172,22 @@ const VALID_VIEWS: View[] = [
   "skillsDiscovery",
   "mcp",
   "agents",
+  "keyferry",
   "universal",
   "sessions",
   "workspace",
   "openclawEnv",
   "openclawTools",
   "openclawAgents",
+  "hermesMemory",
 ];
 
 const getInitialView = (): View => {
   const saved = localStorage.getItem(VIEW_STORAGE_KEY) as View | null;
   if (saved && VALID_VIEWS.includes(saved)) {
+    if (KEYFERRY_ONLY_MODE && KEYFERRY_BLOCKED_VIEWS.includes(saved)) {
+      return "providers";
+    }
     return saved;
   }
   return "providers";
@@ -147,19 +201,48 @@ function App() {
   const [currentView, setCurrentView] = useState<View>(getInitialView);
   const [settingsDefaultTab, setSettingsDefaultTab] = useState("general");
   const [isAddOpen, setIsAddOpen] = useState(false);
+  const [isWindowMaximized, setIsWindowMaximized] = useState(false);
 
   useEffect(() => {
     localStorage.setItem(VIEW_STORAGE_KEY, currentView);
   }, [currentView]);
 
   const { data: settingsData } = useSettingsQuery();
-  const visibleApps: VisibleApps = settingsData?.visibleApps ?? {
+  const useAppWindowControls =
+    isLinux() && (settingsData?.useAppWindowControls ?? false);
+  const dragBarHeight = useAppWindowControls ? 32 : DEFAULT_DRAG_BAR_HEIGHT;
+  const contentTopOffset = dragBarHeight + HEADER_HEIGHT;
+  const settingsVisibleApps: VisibleApps = settingsData?.visibleApps ?? {
     claude: true,
     codex: true,
     gemini: true,
     opencode: true,
     openclaw: true,
+    hermes: true,
   };
+  const {
+    data: keyferryStatus,
+    isLoading: isKeyferryStatusLoading,
+    refetch: refetchKeyferryStatus,
+  } = useQuery({
+    queryKey: ["keyferryStatus"],
+    queryFn: () => keyferryApi.status(),
+    enabled: KEYFERRY_ONLY_MODE,
+  });
+  const isKeyferryConfigured =
+    !KEYFERRY_ONLY_MODE || keyferryStatus?.configured === true;
+  const isKeyferryGateActive =
+    KEYFERRY_ONLY_MODE && !isKeyferryStatusLoading && !isKeyferryConfigured;
+  const isProviderConfigurationLocked = KEYFERRY_ONLY_MODE;
+  const keyferryConfiguredApps = keyferryStatus?.configuredApps ?? [];
+  const visibleApps: VisibleApps = KEYFERRY_ONLY_MODE
+    ? {
+        ...KEYFERRY_CORE_VISIBLE_APPS,
+        opencode: keyferryConfiguredApps.includes("opencode"),
+        openclaw: keyferryConfiguredApps.includes("openclaw"),
+        hermes: false,
+      }
+    : settingsVisibleApps;
 
   const getFirstVisibleApp = (): AppId => {
     if (visibleApps.claude) return "claude";
@@ -167,6 +250,7 @@ function App() {
     if (visibleApps.gemini) return "gemini";
     if (visibleApps.opencode) return "opencode";
     if (visibleApps.openclaw) return "openclaw";
+    if (visibleApps.hermes) return "hermes";
     return "claude"; // fallback
   };
 
@@ -176,6 +260,21 @@ function App() {
     }
   }, [visibleApps, activeApp]);
 
+  useEffect(() => {
+    if (isKeyferryGateActive && currentView !== "keyferry") {
+      setCurrentView("keyferry");
+      return;
+    }
+
+    if (KEYFERRY_ONLY_MODE && KEYFERRY_BLOCKED_VIEWS.includes(currentView)) {
+      setCurrentView("providers");
+    }
+
+    if (OPENCLAW_ONLY_VIEWS.includes(currentView) && activeApp !== "openclaw") {
+      setCurrentView("providers");
+    }
+  }, [activeApp, currentView, isKeyferryGateActive]);
+
   // Fallback from sessions view when switching to an app without session support
   useEffect(() => {
     if (
@@ -184,7 +283,8 @@ function App() {
       activeApp !== "codex" &&
       activeApp !== "opencode" &&
       activeApp !== "openclaw" &&
-      activeApp !== "gemini"
+      activeApp !== "gemini" &&
+      activeApp !== "hermes"
     ) {
       setCurrentView("providers");
     }
@@ -204,6 +304,8 @@ function App() {
 
   const toolbarRef = useRef<HTMLDivElement>(null);
   const isToolbarCompact = useAutoCompact(toolbarRef);
+
+  useUsageCacheBridge();
 
   const promptPanelRef = useRef<any>(null);
   const mcpPanelRef = useRef<any>(null);
@@ -246,7 +348,8 @@ function App() {
     activeApp === "codex" ||
     activeApp === "opencode" ||
     activeApp === "openclaw" ||
-    activeApp === "gemini";
+    activeApp === "gemini" ||
+    activeApp === "hermes";
 
   const {
     addProvider,
@@ -255,7 +358,11 @@ function App() {
     deleteProvider,
     saveUsageScript,
     setAsDefaultModel,
-  } = useProviderActions(activeApp, isProxyRunning);
+  } = useProviderActions(
+    activeApp,
+    isProxyRunning,
+    isProxyRunning && isCurrentAppTakeoverActive,
+  );
 
   const disableOmoMutation = useDisableCurrentOmo();
   const handleDisableOmo = () => {
@@ -322,6 +429,7 @@ function App() {
         const { listen } = await import("@tauri-apps/api/event");
         unsubscribe = await listen("universal-provider-synced", async () => {
           await queryClient.invalidateQueries({ queryKey: ["providers"] });
+          await queryClient.invalidateQueries({ queryKey: ["keyferryStatus"] });
           try {
             await providersApi.updateTrayMenu();
           } catch (error) {
@@ -385,6 +493,77 @@ function App() {
       unsubscribe?.();
     };
   }, [queryClient, t]);
+
+  // Listen for proxy-official-warning: warn when takeover is enabled with an official provider
+  useEffect(() => {
+    let unsubscribe: (() => void) | undefined;
+
+    const setup = async () => {
+      unsubscribe = await listen("proxy-official-warning", (event) => {
+        const { providerName } = event.payload as {
+          appType: string;
+          providerName: string;
+        };
+        toast.warning(
+          t("notifications.proxyOfficialWarning", {
+            name: providerName,
+            defaultValue: `当前供应商 ${providerName} 是官方供应商，建议切换到第三方供应商后再使用代理接管`,
+          }),
+          { duration: 8000 },
+        );
+      });
+    };
+
+    void setup();
+    return () => {
+      unsubscribe?.();
+    };
+  }, [t]);
+
+  useEffect(() => {
+    let active = true;
+    let unlistenResize: (() => void) | undefined;
+
+    const setupWindowStateSync = async () => {
+      try {
+        const currentWindow = getCurrentWindow();
+        const syncWindowMaximizedState = async () => {
+          const maximized = await currentWindow.isMaximized();
+          if (active) {
+            setIsWindowMaximized(maximized);
+          }
+        };
+
+        await syncWindowMaximizedState();
+        unlistenResize = await currentWindow.onResized(() => {
+          void syncWindowMaximizedState();
+        });
+      } catch (error) {
+        console.error("[App] Failed to sync window maximized state", error);
+      }
+    };
+
+    void setupWindowStateSync();
+    return () => {
+      active = false;
+      unlistenResize?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    // settingsData 未加载时跳过，避免用 fallback false 覆盖 Rust 侧已设好的装饰状态
+    if (!settingsData) return;
+
+    const syncWindowDecorations = async () => {
+      try {
+        await getCurrentWindow().setDecorations(!useAppWindowControls);
+      } catch (error) {
+        console.error("[App] Failed to update window decorations", error);
+      }
+    };
+
+    void syncWindowDecorations();
+  }, [useAppWindowControls, settingsData]);
 
   useEffect(() => {
     const checkEnvOnStartup = async () => {
@@ -520,6 +699,11 @@ function App() {
     };
   }, []);
 
+  const [launchDashboardOpen, setLaunchDashboardOpen] = useState(false);
+  const openHermesWebUI = useOpenHermesWebUI(() =>
+    setLaunchDashboardOpen(true),
+  );
+
   const handleOpenWebsite = async (url: string) => {
     try {
       await settingsApi.openExternal(url);
@@ -563,6 +747,10 @@ function App() {
         });
         await queryClient.invalidateQueries({
           queryKey: openclawKeys.health,
+        });
+      } else if (activeApp === "hermes") {
+        await queryClient.invalidateQueries({
+          queryKey: hermesKeys.liveProviderIds,
         });
       }
       toast.success(
@@ -614,7 +802,11 @@ function App() {
       iconColor: provider.iconColor,
     };
 
-    if (activeApp === "opencode" || activeApp === "openclaw") {
+    if (
+      activeApp === "opencode" ||
+      activeApp === "openclaw" ||
+      activeApp === "hermes"
+    ) {
       let liveProviderIds: string[] = [];
       try {
         liveProviderIds =
@@ -623,10 +815,15 @@ function App() {
                 queryKey: ["opencodeLiveProviderIds"],
                 queryFn: () => providersApi.getOpenCodeLiveProviderIds(),
               })
-            : await queryClient.ensureQueryData({
-                queryKey: openclawKeys.liveProviderIds,
-                queryFn: () => providersApi.getOpenClawLiveProviderIds(),
-              });
+            : activeApp === "openclaw"
+              ? await queryClient.ensureQueryData({
+                  queryKey: openclawKeys.liveProviderIds,
+                  queryFn: () => providersApi.getOpenClawLiveProviderIds(),
+                })
+              : await queryClient.ensureQueryData({
+                  queryKey: hermesKeys.liveProviderIds,
+                  queryFn: () => providersApi.getHermesLiveProviderIds(),
+                });
       } catch (error) {
         console.error(
           "[App] Failed to load live provider IDs for duplication",
@@ -728,6 +925,49 @@ function App() {
     }
   };
 
+  const notifyWindowControlError = (error: unknown) => {
+    toast.error(
+      t("notifications.windowControlFailed", {
+        defaultValue: "窗口控制失败：{{error}}",
+        error: extractErrorMessage(error),
+      }),
+    );
+  };
+
+  const handleWindowMinimize = async () => {
+    try {
+      await getCurrentWindow().minimize();
+    } catch (error) {
+      console.error("[App] Failed to minimize window", error);
+      notifyWindowControlError(error);
+    }
+  };
+
+  const handleWindowToggleMaximize = async () => {
+    try {
+      const currentWindow = getCurrentWindow();
+      await currentWindow.toggleMaximize();
+      setIsWindowMaximized(await currentWindow.isMaximized());
+    } catch (error) {
+      console.error("[App] Failed to toggle maximize", error);
+      notifyWindowControlError(error);
+    }
+  };
+
+  const handleWindowClose = async () => {
+    try {
+      await getCurrentWindow().close();
+    } catch (error) {
+      console.error("[App] Failed to close window", error);
+      notifyWindowControlError(error);
+    }
+  };
+
+  const handleKeyFerryConfigured = async () => {
+    await refetchKeyferryStatus();
+    setCurrentView("providers");
+  };
+
   const renderContent = () => {
     const content = (() => {
       switch (currentView) {
@@ -738,6 +978,8 @@ function App() {
               onOpenChange={() => setCurrentView("providers")}
               onImportSuccess={handleImportSuccess}
               defaultTab={settingsDefaultTab}
+              allowConfigImport={!isProviderConfigurationLocked}
+              allowDatabaseRestore={!isProviderConfigurationLocked}
             />
           );
         case "prompts":
@@ -749,6 +991,8 @@ function App() {
               appId={activeApp}
             />
           );
+        case "hermesMemory":
+          return <HermesMemoryPanel />;
         case "skills":
           return (
             <UnifiedSkillsPanel
@@ -775,7 +1019,14 @@ function App() {
           return (
             <AgentsPanel onOpenChange={() => setCurrentView("providers")} />
           );
+        case "keyferry":
+          return <KeyFerryLoginPanel onConfigured={handleKeyFerryConfigured} />;
         case "universal":
+          if (isProviderConfigurationLocked) {
+            return (
+              <KeyFerryLoginPanel onConfigured={handleKeyFerryConfigured} />
+            );
+          }
           return (
             <div className="px-6 pt-4">
               <UniversalProviderPanel />
@@ -819,33 +1070,57 @@ function App() {
                       onEdit={(provider) => {
                         setEditingProvider(provider);
                       }}
-                      onDelete={(provider) =>
-                        setConfirmAction({ provider, action: "delete" })
-                      }
+                      onDelete={(provider) => {
+                        if (!isProviderConfigurationLocked) {
+                          setConfirmAction({ provider, action: "delete" });
+                        }
+                      }}
                       onRemoveFromConfig={
-                        activeApp === "opencode" || activeApp === "openclaw"
+                        !isProviderConfigurationLocked &&
+                        (activeApp === "opencode" ||
+                          activeApp === "openclaw" ||
+                          activeApp === "hermes")
                           ? (provider) =>
                               setConfirmAction({ provider, action: "remove" })
                           : undefined
                       }
                       onDisableOmo={
-                        activeApp === "opencode" ? handleDisableOmo : undefined
+                        !isProviderConfigurationLocked &&
+                        activeApp === "opencode"
+                          ? handleDisableOmo
+                          : undefined
                       }
                       onDisableOmoSlim={
+                        !isProviderConfigurationLocked &&
                         activeApp === "opencode"
                           ? handleDisableOmoSlim
                           : undefined
                       }
-                      onDuplicate={handleDuplicateProvider}
+                      onDuplicate={
+                        isProviderConfigurationLocked
+                          ? () => undefined
+                          : handleDuplicateProvider
+                      }
                       onConfigureUsage={setUsageProvider}
                       onOpenWebsite={handleOpenWebsite}
                       onOpenTerminal={
                         activeApp === "claude" ? handleOpenTerminal : undefined
                       }
-                      onCreate={() => setIsAddOpen(true)}
-                      onSetAsDefault={
-                        activeApp === "openclaw" ? setAsDefaultModel : undefined
+                      onCreate={
+                        isProviderConfigurationLocked
+                          ? undefined
+                          : () => setIsAddOpen(true)
                       }
+                      onSetAsDefault={
+                        !isProviderConfigurationLocked
+                          ? activeApp === "openclaw"
+                            ? setAsDefaultModel
+                            : activeApp === "hermes"
+                              ? switchProvider
+                              : undefined
+                          : undefined
+                      }
+                      configurationLocked={isProviderConfigurationLocked}
                     />
                   </motion.div>
                 </AnimatePresence>
@@ -871,16 +1146,115 @@ function App() {
     );
   };
 
+  if (
+    KEYFERRY_ONLY_MODE &&
+    (isKeyferryStatusLoading || !isKeyferryConfigured)
+  ) {
+    return (
+      <div
+        className="flex h-screen flex-col overflow-hidden bg-background text-foreground selection:bg-primary/30"
+        style={{ overflowX: "hidden", paddingTop: contentTopOffset }}
+      >
+        <div
+          className="fixed left-0 right-0 top-0 z-[60]"
+          data-tauri-drag-region
+          style={{ WebkitAppRegion: "drag", height: dragBarHeight } as any}
+        />
+        <header
+          className="fixed z-50 w-full border-b border-border/40 bg-background/80 backdrop-blur-md"
+          data-tauri-drag-region
+          style={
+            {
+              WebkitAppRegion: "drag",
+              top: dragBarHeight,
+              height: HEADER_HEIGHT,
+            } as any
+          }
+        >
+          <div
+            className="flex h-full items-center justify-between px-6"
+            data-tauri-drag-region
+            style={{ WebkitAppRegion: "drag" } as any}
+          >
+            <div
+              className="flex items-center gap-2"
+              style={{ WebkitAppRegion: "no-drag" } as any}
+            >
+              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                <KeyRound className="h-4 w-4" />
+              </div>
+              <span className="text-lg font-semibold">钥渡 KeyFerry</span>
+            </div>
+          </div>
+        </header>
+        <main className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+          {isKeyferryStatusLoading ? (
+            <div className="flex flex-1 items-center justify-center">
+              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+            </div>
+          ) : (
+            <KeyFerryLoginPanel onConfigured={handleKeyFerryConfigured} />
+          )}
+        </main>
+      </div>
+    );
+  }
+
   return (
     <div
-      className="flex flex-col h-screen overflow-hidden bg-background text-foreground selection:bg-primary/30"
-      style={{ overflowX: "hidden", paddingTop: CONTENT_TOP_OFFSET }}
+      className="flex flex-col h-screen overflow-hidden bg-background text-foreground selection:bg-primary/30 pb-4"
+      style={{ overflowX: "hidden", paddingTop: contentTopOffset }}
     >
-      <div
-        className="fixed top-0 left-0 right-0 z-[60]"
-        data-tauri-drag-region
-        style={{ WebkitAppRegion: "drag", height: DRAG_BAR_HEIGHT } as any}
-      />
+      {(dragBarHeight > 0 || useAppWindowControls) && (
+        <div
+          className="fixed top-0 left-0 right-0 z-[70] flex items-center justify-end px-2"
+          data-tauri-drag-region
+          style={{ WebkitAppRegion: "drag", height: dragBarHeight } as any}
+        >
+          {useAppWindowControls && (
+            <div
+              className="flex items-center gap-1"
+              style={{ WebkitAppRegion: "no-drag" } as any}
+            >
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => void handleWindowMinimize()}
+                title={t("header.windowMinimize")}
+                className="h-7 w-7"
+              >
+                <Minus className="w-4 h-4" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => void handleWindowToggleMaximize()}
+                title={
+                  isWindowMaximized
+                    ? t("header.windowRestore")
+                    : t("header.windowMaximize")
+                }
+                className="h-7 w-7"
+              >
+                {isWindowMaximized ? (
+                  <Minimize2 className="w-4 h-4" />
+                ) : (
+                  <Maximize2 className="w-4 h-4" />
+                )}
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => void handleWindowClose()}
+                title={t("header.windowClose")}
+                className="h-7 w-7 hover:bg-red-500/15 hover:text-red-500"
+              >
+                <X className="w-4 h-4" />
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
       {showEnvBanner && envConflicts.length > 0 && (
         <EnvWarningBanner
           conflicts={envConflicts}
@@ -908,19 +1282,19 @@ function App() {
 
       <header
         className="fixed z-50 w-full transition-all duration-300 bg-background/80 backdrop-blur-md"
-        data-tauri-drag-region
+        {...DRAG_REGION_ATTR}
         style={
           {
-            WebkitAppRegion: "drag",
-            top: DRAG_BAR_HEIGHT,
+            ...DRAG_REGION_STYLE,
+            top: dragBarHeight,
             height: HEADER_HEIGHT,
           } as any
         }
       >
         <div
           className="flex h-full items-center justify-between gap-2 px-6"
-          data-tauri-drag-region
-          style={{ WebkitAppRegion: "drag" } as any}
+          {...DRAG_REGION_ATTR}
+          style={{ ...DRAG_REGION_STYLE } as any}
         >
           <div
             className="flex items-center gap-1"
@@ -950,6 +1324,10 @@ function App() {
                   {currentView === "skillsDiscovery" && t("skills.title")}
                   {currentView === "mcp" && t("mcp.unifiedPanel.title")}
                   {currentView === "agents" && t("agents.title")}
+                  {currentView === "keyferry" &&
+                    t("keyferry.title", {
+                      defaultValue: "钥渡 KeyFerry",
+                    })}
                   {currentView === "universal" &&
                     t("universalProvider.title", {
                       defaultValue: "统一供应商",
@@ -960,13 +1338,14 @@ function App() {
                   {currentView === "openclawTools" && t("openclaw.tools.title")}
                   {currentView === "openclawAgents" &&
                     t("openclaw.agents.title")}
+                  {currentView === "hermesMemory" && t("hermes.memory.title")}
                 </h1>
               </div>
             ) : (
               <div className="flex items-center gap-2">
                 <div className="relative inline-flex items-center">
                   <a
-                    href="https://github.com/farion1231/cc-switch"
+                    href="https://x.sozdata.com"
                     target="_blank"
                     rel="noreferrer"
                     className={cn(
@@ -976,7 +1355,7 @@ function App() {
                         : "text-blue-500 hover:text-blue-600 dark:text-blue-400 dark:hover:text-blue-300",
                     )}
                   >
-                    CC Switch
+                    钥渡 KeyFerry
                   </a>
                 </div>
                 <Button
@@ -1020,7 +1399,8 @@ function App() {
           <div className="flex flex-1 min-w-0 items-center justify-end gap-1.5">
             {currentView === "providers" &&
               activeApp !== "opencode" &&
-              activeApp !== "openclaw" && (
+              activeApp !== "openclaw" &&
+              activeApp !== "hermes" && (
                 <div
                   className="flex shrink-0 items-center gap-1.5"
                   style={{ WebkitAppRegion: "no-drag" } as any}
@@ -1035,7 +1415,7 @@ function App() {
               )}
             <div
               ref={toolbarRef}
-              className="flex flex-1 min-w-0 overflow-x-hidden items-center"
+              className="flex flex-1 min-w-0 overflow-x-hidden items-center py-4 pr-2"
             >
               <div
                 className="flex shrink-0 items-center gap-1.5 ml-auto"
@@ -1155,7 +1535,11 @@ function App() {
                       <AnimatePresence mode="wait">
                         <motion.div
                           key={
-                            activeApp === "openclaw" ? "openclaw" : "default"
+                            activeApp === "openclaw"
+                              ? "openclaw"
+                              : activeApp === "hermes"
+                                ? "hermes"
+                                : "default"
                           }
                           className="flex items-center gap-1"
                           initial={{ opacity: 0 }}
@@ -1163,13 +1547,52 @@ function App() {
                           exit={{ opacity: 0 }}
                           transition={{ duration: 0.15 }}
                         >
-                          {activeApp === "openclaw" ? (
+                          {activeApp === "hermes" ? (
+                            <>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setCurrentView("skills")}
+                                className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
+                                title={t("skills.manage")}
+                              >
+                                <Wrench className="w-4 h-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setCurrentView("hermesMemory")}
+                                className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
+                                title={t("hermes.memory.title")}
+                              >
+                                <Brain className="w-4 h-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => void openHermesWebUI()}
+                                className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
+                                title={t("hermes.webui.open")}
+                              >
+                                <LayoutDashboard className="w-4 h-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setCurrentView("mcp")}
+                                className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
+                                title={t("mcp.title")}
+                              >
+                                <McpIcon size={16} />
+                              </Button>
+                            </>
+                          ) : activeApp === "openclaw" ? (
                             <>
                               <Button
                                 variant="ghost"
                                 size="sm"
                                 onClick={() => setCurrentView("workspace")}
-                                className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5"
+                                className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
                                 title={t("workspace.manage")}
                               >
                                 <FolderOpen className="w-4 h-4" />
@@ -1178,7 +1601,7 @@ function App() {
                                 variant="ghost"
                                 size="sm"
                                 onClick={() => setCurrentView("openclawEnv")}
-                                className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5"
+                                className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
                                 title={t("openclaw.env.title")}
                               >
                                 <KeyRound className="w-4 h-4" />
@@ -1187,7 +1610,7 @@ function App() {
                                 variant="ghost"
                                 size="sm"
                                 onClick={() => setCurrentView("openclawTools")}
-                                className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5"
+                                className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
                                 title={t("openclaw.tools.title")}
                               >
                                 <Shield className="w-4 h-4" />
@@ -1196,7 +1619,7 @@ function App() {
                                 variant="ghost"
                                 size="sm"
                                 onClick={() => setCurrentView("openclawAgents")}
-                                className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5"
+                                className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
                                 title={t("openclaw.agents.title")}
                               >
                                 <Cpu className="w-4 h-4" />
@@ -1205,7 +1628,7 @@ function App() {
                                 variant="ghost"
                                 size="sm"
                                 onClick={() => setCurrentView("sessions")}
-                                className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5"
+                                className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
                                 title={t("sessionManager.title")}
                               >
                                 <History className="w-4 h-4" />
@@ -1232,7 +1655,7 @@ function App() {
                                 variant="ghost"
                                 size="sm"
                                 onClick={() => setCurrentView("prompts")}
-                                className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5"
+                                className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
                                 title={t("prompts.manage")}
                               >
                                 <Book className="w-4 h-4" />
@@ -1256,7 +1679,7 @@ function App() {
                                 variant="ghost"
                                 size="sm"
                                 onClick={() => setCurrentView("mcp")}
-                                className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5"
+                                className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5 w-8 px-2"
                                 title={t("mcp.title")}
                               >
                                 <McpIcon size={16} />
@@ -1268,12 +1691,29 @@ function App() {
                     </div>
 
                     <Button
-                      onClick={() => setIsAddOpen(true)}
-                      size="icon"
-                      className={`ml-2 ${addActionButtonClass}`}
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setCurrentView("keyferry")}
+                      className="text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5"
+                      title={t("keyferry.title", {
+                        defaultValue: "钥渡 KeyFerry",
+                      })}
+                      aria-label={t("keyferry.title", {
+                        defaultValue: "钥渡 KeyFerry",
+                      })}
                     >
-                      <Plus className="w-5 h-5" />
+                      <KeyRound className="w-4 h-4" />
                     </Button>
+
+                    {!isProviderConfigurationLocked && (
+                      <Button
+                        onClick={() => setIsAddOpen(true)}
+                        size="icon"
+                        className={`ml-2 ${addActionButtonClass}`}
+                      >
+                        <Plus className="w-5 h-5" />
+                      </Button>
+                    )}
                   </>
                 )}
               </div>
@@ -1289,12 +1729,14 @@ function App() {
         {renderContent()}
       </main>
 
-      <AddProviderDialog
-        open={isAddOpen}
-        onOpenChange={setIsAddOpen}
-        appId={activeApp}
-        onSubmit={addProvider}
-      />
+      {!isProviderConfigurationLocked && (
+        <AddProviderDialog
+          open={isAddOpen}
+          onOpenChange={setIsAddOpen}
+          appId={activeApp}
+          onSubmit={addProvider}
+        />
+      )}
 
       <EditProviderDialog
         open={Boolean(editingProvider)}
@@ -1324,29 +1766,54 @@ function App() {
         />
       )}
 
+      {!isProviderConfigurationLocked && (
+        <ConfirmDialog
+          isOpen={Boolean(confirmAction)}
+          title={
+            confirmAction?.action === "remove"
+              ? t("confirm.removeProvider")
+              : t("confirm.deleteProvider")
+          }
+          message={
+            confirmAction
+              ? confirmAction.action === "remove"
+                ? t("confirm.removeProviderMessage", {
+                    name: confirmAction.provider.name,
+                  })
+                : t("confirm.deleteProviderMessage", {
+                    name: confirmAction.provider.name,
+                  })
+              : ""
+          }
+          onConfirm={() => void handleConfirmAction()}
+          onCancel={() => setConfirmAction(null)}
+        />
+      )}
+
       <ConfirmDialog
-        isOpen={Boolean(confirmAction)}
-        title={
-          confirmAction?.action === "remove"
-            ? t("confirm.removeProvider")
-            : t("confirm.deleteProvider")
-        }
-        message={
-          confirmAction
-            ? confirmAction.action === "remove"
-              ? t("confirm.removeProviderMessage", {
-                  name: confirmAction.provider.name,
-                })
-              : t("confirm.deleteProviderMessage", {
-                  name: confirmAction.provider.name,
-                })
-            : ""
-        }
-        onConfirm={() => void handleConfirmAction()}
-        onCancel={() => setConfirmAction(null)}
+        isOpen={launchDashboardOpen}
+        title={t("hermes.webui.launchConfirmTitle")}
+        message={t("hermes.webui.launchConfirmMessage")}
+        confirmText={t("hermes.webui.launchConfirmAction")}
+        variant="info"
+        onConfirm={() => {
+          setLaunchDashboardOpen(false);
+          void (async () => {
+            try {
+              await hermesApi.launchDashboard();
+              toast.success(t("hermes.webui.launching"));
+            } catch (error) {
+              toast.error(t("hermes.webui.launchFailed"), {
+                description: extractErrorMessage(error) || undefined,
+              });
+            }
+          })();
+        }}
+        onCancel={() => setLaunchDashboardOpen(false)}
       />
 
-      <DeepLinkImportDialog />
+      {!isProviderConfigurationLocked && <DeepLinkImportDialog />}
+      <FirstRunNoticeDialog />
     </div>
   );
 }

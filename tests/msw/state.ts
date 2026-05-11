@@ -10,77 +10,144 @@ import type {
 type ProvidersByApp = Record<AppId, Record<string, Provider>>;
 type CurrentProviderState = Record<AppId, string>;
 type McpConfigState = Record<AppId, Record<string, McpServer>>;
-type LiveProviderIdsByApp = Record<"opencode" | "openclaw", string[]>;
+type LiveProviderIdsByApp = Record<"opencode" | "openclaw" | "hermes", string[]>;
 
 const createDefaultProviders = (): ProvidersByApp => ({
   claude: {
-    "claude-1": {
-      id: "claude-1",
-      name: "Claude Default",
-      settingsConfig: {},
+    default: {
+      id: "default",
+      name: "Claude Official",
+      settingsConfig: { env: {} },
+      websiteUrl: "https://www.anthropic.com/claude-code",
       category: "official",
       sortIndex: 0,
-      createdAt: Date.now(),
+      createdAt: Date.now() - 1,
     },
-    "claude-2": {
-      id: "claude-2",
-      name: "Claude Custom",
-      settingsConfig: {},
-      category: "custom",
+    "universal-claude-keyferry-newapi": {
+      id: "universal-claude-keyferry-newapi",
+      name: "钥渡 KeyFerry",
+      settingsConfig: {
+        env: {
+          ANTHROPIC_BASE_URL: "https://x.sozdata.com",
+          ANTHROPIC_AUTH_TOKEN: "mock-keyferry-token",
+          ANTHROPIC_MODEL: "claude-sonnet-4-20250514",
+        },
+      },
+      category: "aggregator",
       sortIndex: 1,
-      createdAt: Date.now() + 1,
+      createdAt: Date.now(),
     },
   },
   codex: {
-    "codex-1": {
-      id: "codex-1",
-      name: "Codex Default",
-      settingsConfig: {},
+    default: {
+      id: "default",
+      name: "OpenAI Official",
+      settingsConfig: { auth: {}, config: "" },
+      websiteUrl: "https://chatgpt.com/codex",
       category: "official",
       sortIndex: 0,
-      createdAt: Date.now(),
+      createdAt: Date.now() - 1,
     },
-    "codex-2": {
-      id: "codex-2",
-      name: "Codex Secondary",
-      settingsConfig: {},
-      category: "custom",
+    "universal-codex-keyferry-newapi": {
+      id: "universal-codex-keyferry-newapi",
+      name: "钥渡 KeyFerry",
+      settingsConfig: {
+        auth: {
+          OPENAI_API_KEY: "mock-keyferry-token",
+        },
+        config: 'model_provider = "newapi"\nmodel = "gpt-5.4"',
+      },
+      category: "aggregator",
       sortIndex: 1,
-      createdAt: Date.now() + 1,
+      createdAt: Date.now(),
     },
   },
   gemini: {
-    "gemini-1": {
-      id: "gemini-1",
-      name: "Gemini Default",
-      settingsConfig: {
-        env: {
-          GEMINI_API_KEY: "test-key",
-          GOOGLE_GEMINI_BASE_URL: "https://generativelanguage.googleapis.com",
-        },
-      },
+    default: {
+      id: "default",
+      name: "Google Gemini Official",
+      settingsConfig: { env: {} },
+      websiteUrl: "https://ai.google.dev/",
       category: "official",
       sortIndex: 0,
+      createdAt: Date.now() - 1,
+    },
+    "universal-gemini-keyferry-newapi": {
+      id: "universal-gemini-keyferry-newapi",
+      name: "钥渡 KeyFerry",
+      settingsConfig: {
+        env: {
+          GEMINI_API_KEY: "mock-keyferry-token",
+          GOOGLE_GEMINI_BASE_URL: "https://x.sozdata.com",
+          GEMINI_MODEL: "gemini-2.5-pro",
+        },
+      },
+      category: "aggregator",
+      sortIndex: 1,
       createdAt: Date.now(),
     },
   },
-  opencode: {},
-  openclaw: {},
+  opencode: {
+    "universal-opencode-keyferry-newapi": {
+      id: "universal-opencode-keyferry-newapi",
+      name: "钥渡 KeyFerry",
+      settingsConfig: {
+        npm: "@ai-sdk/openai-compatible",
+        name: "钥渡 KeyFerry",
+        options: {
+          baseURL: "https://x.sozdata.com/v1",
+          apiKey: "mock-keyferry-token",
+        },
+        models: {
+          "gpt-5.4": {
+            name: "gpt-5.4",
+          },
+        },
+      },
+      category: "aggregator",
+      sortIndex: 1,
+      createdAt: Date.now(),
+      meta: {
+        liveConfigManaged: true,
+      },
+    },
+  },
+  openclaw: {
+    "universal-openclaw-keyferry-newapi": {
+      id: "universal-openclaw-keyferry-newapi",
+      name: "钥渡 KeyFerry",
+      settingsConfig: {
+        baseUrl: "https://x.sozdata.com/v1",
+        apiKey: "mock-keyferry-token",
+        api: "openai-completions",
+        models: [{ id: "gpt-5.4", name: "gpt-5.4" }],
+      },
+      category: "aggregator",
+      sortIndex: 1,
+      createdAt: Date.now(),
+      meta: {
+        liveConfigManaged: true,
+      },
+    },
+  },
+  hermes: {},
 });
 
 const createDefaultCurrent = (): CurrentProviderState => ({
-  claude: "claude-1",
-  codex: "codex-1",
-  gemini: "gemini-1",
+  claude: "universal-claude-keyferry-newapi",
+  codex: "universal-codex-keyferry-newapi",
+  gemini: "universal-gemini-keyferry-newapi",
   opencode: "",
   openclaw: "",
+  hermes: "",
 });
 
 let providers = createDefaultProviders();
 let current = createDefaultCurrent();
 let liveProviderIds: LiveProviderIdsByApp = {
-  opencode: [],
-  openclaw: [],
+  opencode: ["universal-opencode-keyferry-newapi"],
+  openclaw: ["universal-openclaw-keyferry-newapi"],
+  hermes: [],
 };
 let settingsState: Settings = {
   showInTray: true,
@@ -153,6 +220,7 @@ let mcpConfigs: McpConfigState = {
         gemini: false,
         opencode: false,
         openclaw: false,
+        hermes: false,
       },
       server: {
         type: "stdio",
@@ -171,6 +239,7 @@ let mcpConfigs: McpConfigState = {
         gemini: false,
         opencode: false,
         openclaw: false,
+        hermes: false,
       },
       server: {
         type: "http",
@@ -181,6 +250,7 @@ let mcpConfigs: McpConfigState = {
   gemini: {},
   opencode: {},
   openclaw: {},
+  hermes: {},
 };
 
 const cloneProviders = (value: ProvidersByApp) =>
@@ -190,8 +260,9 @@ export const resetProviderState = () => {
   providers = createDefaultProviders();
   current = createDefaultCurrent();
   liveProviderIds = {
-    opencode: [],
-    openclaw: [],
+    opencode: ["universal-opencode-keyferry-newapi"],
+    openclaw: ["universal-openclaw-keyferry-newapi"],
+    hermes: [],
   };
   sessionsState = createDefaultSessions();
   sessionMessagesState = createDefaultSessionMessages();
@@ -216,6 +287,7 @@ export const resetProviderState = () => {
           gemini: false,
           opencode: false,
           openclaw: false,
+          hermes: false,
         },
         server: {
           type: "stdio",
@@ -234,6 +306,7 @@ export const resetProviderState = () => {
           gemini: false,
           opencode: false,
           openclaw: false,
+          hermes: false,
         },
         server: {
           type: "http",
@@ -244,6 +317,7 @@ export const resetProviderState = () => {
     gemini: {},
     opencode: {},
     openclaw: {},
+    hermes: {},
   };
 };
 
@@ -252,12 +326,12 @@ export const getProviders = (appType: AppId) =>
 
 export const getCurrentProviderId = (appType: AppId) => current[appType] ?? "";
 
-export const getLiveProviderIds = (appType: "opencode" | "openclaw") => [
+export const getLiveProviderIds = (appType: "opencode" | "openclaw" | "hermes") => [
   ...liveProviderIds[appType],
 ];
 
 export const setLiveProviderIds = (
-  appType: "opencode" | "openclaw",
+  appType: "opencode" | "openclaw" | "hermes",
   ids: string[],
 ) => {
   liveProviderIds[appType] = [...ids];

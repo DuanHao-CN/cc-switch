@@ -9,7 +9,6 @@ import {
   ScrollText,
   HardDriveDownload,
   FlaskConical,
-  KeyRound,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -32,6 +31,7 @@ import { LanguageSettings } from "@/components/settings/LanguageSettings";
 import { ThemeSettings } from "@/components/settings/ThemeSettings";
 import { WindowSettings } from "@/components/settings/WindowSettings";
 import { AppVisibilitySettings } from "@/components/settings/AppVisibilitySettings";
+import { SkillStorageLocationSettings } from "@/components/settings/SkillStorageLocationSettings";
 import { SkillSyncMethodSettings } from "@/components/settings/SkillSyncMethodSettings";
 import { TerminalSettings } from "@/components/settings/TerminalSettings";
 import { DirectorySettings } from "@/components/settings/DirectorySettings";
@@ -44,6 +44,7 @@ import { ModelTestConfigPanel } from "@/components/usage/ModelTestConfigPanel";
 import { UsageDashboard } from "@/components/usage/UsageDashboard";
 import { LogConfigPanel } from "@/components/settings/LogConfigPanel";
 import { AuthCenterPanel } from "@/components/settings/AuthCenterPanel";
+import { useInstalledSkills } from "@/hooks/useSkills";
 import { useSettings } from "@/hooks/useSettings";
 import { useImportExport } from "@/hooks/useImportExport";
 import { useTranslation } from "react-i18next";
@@ -54,6 +55,8 @@ interface SettingsDialogProps {
   onOpenChange: (open: boolean) => void;
   onImportSuccess?: () => void | Promise<void>;
   defaultTab?: string;
+  allowConfigImport?: boolean;
+  allowDatabaseRestore?: boolean;
 }
 
 export function SettingsPage({
@@ -61,6 +64,8 @@ export function SettingsPage({
   onOpenChange,
   onImportSuccess,
   defaultTab = "general",
+  allowConfigImport = true,
+  allowDatabaseRestore = true,
 }: SettingsDialogProps) {
   const { t } = useTranslation();
   const {
@@ -95,6 +100,8 @@ export function SettingsPage({
     clearSelection,
     resetStatus,
   } = useImportExport({ onImportSuccess });
+
+  const { data: installedSkills } = useInstalledSkills();
 
   const [activeTab, setActiveTab] = useState<string>("general");
   const [showRestartPrompt, setShowRestartPrompt] = useState(false);
@@ -225,15 +232,22 @@ export function SettingsPage({
                       settings={settings}
                       onChange={handleAutoSave}
                     />
-                    <WindowSettings
-                      settings={settings}
-                      onChange={handleAutoSave}
+                    <SkillStorageLocationSettings
+                      value={settings.skillStorageLocation ?? "cc_switch"}
+                      installedCount={installedSkills?.length ?? 0}
+                      onMigrated={(location) =>
+                        updateSettings({ skillStorageLocation: location })
+                      }
                     />
                     <SkillSyncMethodSettings
                       value={settings.skillSyncMethod ?? "auto"}
                       onChange={(method) =>
                         handleAutoSave({ skillSyncMethod: method })
                       }
+                    />
+                    <WindowSettings
+                      settings={settings}
+                      onChange={handleAutoSave}
                     />
                     <TerminalSettings
                       value={settings.preferredTerminal}
@@ -261,23 +275,6 @@ export function SettingsPage({
                   transition={{ duration: 0.3 }}
                   className="space-y-6"
                 >
-                  <div className="flex items-center gap-3 px-1">
-                    <KeyRound className="h-5 w-5 text-primary" />
-                    <div>
-                      <h2 className="text-base font-semibold">
-                        {t("settings.authCenter.heading", {
-                          defaultValue: "认证中心",
-                        })}
-                      </h2>
-                      <p className="text-sm text-muted-foreground">
-                        {t("settings.authCenter.headingDescription", {
-                          defaultValue:
-                            "统一管理可跨应用复用的 OAuth 账号和默认认证来源。",
-                        })}
-                      </p>
-                    </div>
-                  </div>
-
                   <AuthCenterPanel />
                 </motion.div>
               </TabsContent>
@@ -323,6 +320,8 @@ export function SettingsPage({
                             codexDir={settings.codexConfigDir}
                             geminiDir={settings.geminiConfigDir}
                             opencodeDir={settings.opencodeConfigDir}
+                            openclawDir={settings.openclawConfigDir}
+                            hermesDir={settings.hermesConfigDir}
                             onDirectoryChange={updateDirectory}
                             onBrowseDirectory={browseDirectory}
                             onResetDirectory={resetDirectory}
@@ -354,6 +353,7 @@ export function SettingsPage({
                             errorMessage={errorMessage}
                             backupId={backupId}
                             isImporting={isImporting}
+                            allowImport={allowConfigImport}
                             onSelectFile={selectImportFile}
                             onImport={importConfig}
                             onExport={exportConfig}
@@ -388,6 +388,7 @@ export function SettingsPage({
                           <BackupListSection
                             backupIntervalHours={settings.backupIntervalHours}
                             backupRetainCount={settings.backupRetainCount}
+                            allowRestore={allowDatabaseRestore}
                             onSettingsChange={(updates) =>
                               handleAutoSave(updates)
                             }
@@ -416,6 +417,7 @@ export function SettingsPage({
                           <WebdavSyncSection
                             config={settings?.webdavSync}
                             settings={settings}
+                            allowDownload={allowDatabaseRestore}
                             onAutoSave={handleAutoSave}
                           />
                         </AccordionContent>
@@ -480,7 +482,7 @@ export function SettingsPage({
 
             {activeTab === "advanced" && settings && (
               <div
-                className="flex-shrink-0 py-4 border-t border-border-default"
+                className="flex-shrink-0 pt-4 border-t border-border-default"
                 style={{ backgroundColor: "hsl(var(--background))" }}
               >
                 <div className="px-6 flex items-center justify-end gap-3">

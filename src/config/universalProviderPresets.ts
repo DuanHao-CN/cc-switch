@@ -40,17 +40,17 @@ export interface UniversalProviderPreset {
  */
 const NEWAPI_DEFAULT_MODELS: UniversalProviderModels = {
   claude: {
-    model: "claude-sonnet-4-20250514",
-    haikuModel: "claude-haiku-4-20250514",
-    sonnetModel: "claude-sonnet-4-20250514",
-    opusModel: "claude-sonnet-4-20250514",
+    model: "claude-sonnet-4-6",
+    haikuModel: "claude-haiku-4-5-20251001",
+    sonnetModel: "claude-sonnet-4-6",
+    opusModel: "claude-opus-4-7",
   },
   codex: {
     model: "gpt-5.4",
     reasoningEffort: "high",
   },
   gemini: {
-    model: "gemini-2.5-pro",
+    model: "gemini-3.1-pro",
   },
 };
 
@@ -65,6 +65,8 @@ export const universalProviderPresets: UniversalProviderPreset[] = [
       claude: true,
       codex: true,
       gemini: true,
+      opencode: false,
+      openclaw: false,
     },
     defaultModels: NEWAPI_DEFAULT_MODELS,
     websiteUrl: "https://www.newapi.pro",
@@ -80,6 +82,8 @@ export const universalProviderPresets: UniversalProviderPreset[] = [
       claude: true,
       codex: true,
       gemini: true,
+      opencode: false,
+      openclaw: false,
     },
     defaultModels: NEWAPI_DEFAULT_MODELS,
     icon: "openai",
