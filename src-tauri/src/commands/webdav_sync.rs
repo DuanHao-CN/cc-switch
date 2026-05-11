@@ -6,6 +6,7 @@ use tauri::State;
 use crate::commands::sync_support::{
     attach_warning, post_sync_warning_from_result, run_post_import_sync,
 };
+use crate::commands::keyferry::{keyferry_config_locked_message, keyferry_only_mode};
 use crate::error::AppError;
 use crate::services::webdav_sync as webdav_sync_service;
 use crate::settings::{self, WebDavSyncSettings};
@@ -41,6 +42,14 @@ fn require_enabled_webdav_settings() -> Result<WebDavSyncSettings, String> {
         return Err(webdav_sync_disabled_error());
     }
     Ok(settings)
+}
+
+fn ensure_webdav_download_allowed() -> Result<(), String> {
+    if keyferry_only_mode() {
+        Err(keyferry_config_locked_message().to_string())
+    } else {
+        Ok(())
+    }
 }
 
 fn resolve_password_for_request(
@@ -114,6 +123,8 @@ pub async fn webdav_sync_upload(state: State<'_, AppState>) -> Result<Value, Str
 
 #[tauri::command]
 pub async fn webdav_sync_download(state: State<'_, AppState>) -> Result<Value, String> {
+    ensure_webdav_download_allowed()?;
+
     let db = state.db.clone();
     let db_for_sync = db.clone();
     let mut settings = require_enabled_webdav_settings()?;
@@ -171,7 +182,7 @@ pub async fn webdav_sync_fetch_remote_info() -> Result<Value, String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        map_sync_result, persist_sync_error, require_enabled_webdav_settings,
+        ensure_webdav_download_allowed, map_sync_result, persist_sync_error, require_enabled_webdav_settings,
         resolve_password_for_request, run_with_webdav_lock, webdav_sync_mutex,
     };
     use crate::error::AppError;
@@ -353,5 +364,16 @@ mod tests {
             require_enabled_webdav_settings().expect("enabled settings should be accepted");
         assert!(settings.enabled);
         assert_eq!(settings.base_url, "https://dav.example.com/dav/");
+    }
+
+    #[test]
+    fn keyferry_only_mode_blocks_webdav_download_restore() {
+        let err = ensure_webdav_download_allowed()
+            .expect_err("WebDAV download restores the database and must respect KeyFerry lock");
+
+        assert!(
+            err.contains("KeyFerry") || err.contains("钥渡"),
+            "unexpected error: {err}"
+        );
     }
 }

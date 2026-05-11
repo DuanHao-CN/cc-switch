@@ -29,3 +29,6 @@ copilot-api
 .history
 CODEBUDDY.md
 .github
+.gstack/*
+!.gstack/qa-reports/
+!.gstack/qa-reports/**

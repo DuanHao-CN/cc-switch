@@ -127,6 +127,7 @@ type DialogType = "upload" | "download" | null;
 interface WebdavSyncSectionProps {
   config?: WebDavSyncSettings;
   settings?: SettingsFormState;
+  allowDownload?: boolean;
   onAutoSave?: (updates: Partial<SettingsFormState>) => Promise<unknown>;
 }
 
@@ -172,6 +173,7 @@ function ActionButton({
 export function WebdavSyncSection({
   config,
   settings,
+  allowDownload = true,
   onAutoSave,
 }: WebdavSyncSectionProps) {
   const { t } = useTranslation();
@@ -760,23 +762,25 @@ export function WebdavSyncSection({
             }
             idleLabel={t("settings.webdavSync.upload")}
           />
-          <ActionButton
-            type="button"
-            variant="secondary"
-            size="sm"
-            onClick={handleDownloadClick}
-            disabled={!hasSavedConfig}
-            actionState={actionState}
-            targetState="downloading"
-            alsoActiveFor={["fetching_remote"]}
-            icon={DownloadCloud}
-            activeLabel={
-              actionState === "fetching_remote"
-                ? t("settings.webdavSync.fetchingRemote")
-                : t("settings.webdavSync.downloading")
-            }
-            idleLabel={t("settings.webdavSync.download")}
-          />
+          {allowDownload && (
+            <ActionButton
+              type="button"
+              variant="secondary"
+              size="sm"
+              onClick={handleDownloadClick}
+              disabled={!hasSavedConfig}
+              actionState={actionState}
+              targetState="downloading"
+              alsoActiveFor={["fetching_remote"]}
+              icon={DownloadCloud}
+              activeLabel={
+                actionState === "fetching_remote"
+                  ? t("settings.webdavSync.fetchingRemote")
+                  : t("settings.webdavSync.downloading")
+              }
+              idleLabel={t("settings.webdavSync.download")}
+            />
+          )}
         </div>
         {!hasSavedConfig && (
           <p className="text-xs text-muted-foreground">

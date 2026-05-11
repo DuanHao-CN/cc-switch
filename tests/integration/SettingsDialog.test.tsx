@@ -93,6 +93,7 @@ vi.mock("@/components/settings/DirectorySettings", async () => {
 
 vi.mock("@/components/settings/ImportExportSection", () => ({
   ImportExportSection: ({
+    allowImport,
     status,
     selectedFile,
     errorMessage,
@@ -105,12 +106,16 @@ vi.mock("@/components/settings/ImportExportSection", () => ({
     <div>
       <div data-testid="import-status">{status}</div>
       <div data-testid="selected-file">{selectedFile || "none"}</div>
-      <button onClick={onSelectFile}>settings.selectConfigFile</button>
-      <button onClick={onImport} disabled={!selectedFile || isImporting}>
-        {isImporting ? "settings.importing" : "settings.import"}
-      </button>
+      {allowImport !== false && (
+        <>
+          <button onClick={onSelectFile}>settings.selectConfigFile</button>
+          <button onClick={onImport} disabled={!selectedFile || isImporting}>
+            {isImporting ? "settings.importing" : "settings.import"}
+          </button>
+          <button onClick={onClear}>common.clear</button>
+        </>
+      )}
       <button onClick={onExport}>settings.exportConfig</button>
-      <button onClick={onClear}>common.clear</button>
       {errorMessage ? <span>{errorMessage}</span> : null}
     </div>
   ),

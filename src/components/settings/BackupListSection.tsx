@@ -26,6 +26,7 @@ import { extractErrorMessage } from "@/utils/errorUtils";
 interface BackupListSectionProps {
   backupIntervalHours?: number;
   backupRetainCount?: number;
+  allowRestore?: boolean;
   onSettingsChange: (updates: {
     backupIntervalHours?: number;
     backupRetainCount?: number;
@@ -64,6 +65,7 @@ function getDisplayName(filename: string): string {
 export function BackupListSection({
   backupIntervalHours,
   backupRetainCount,
+  allowRestore = true,
   onSettingsChange,
 }: BackupListSectionProps) {
   const { t } = useTranslation();
@@ -382,22 +384,24 @@ export function BackupListSection({
                     >
                       <Trash2 className="h-3 w-3" />
                     </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-7 px-2 text-xs"
-                      disabled={isRestoring || isDeleting}
-                      onClick={() => setConfirmFilename(backup.filename)}
-                    >
-                      <RotateCcw className="h-3 w-3 mr-1" />
-                      {isRestoring
-                        ? t("settings.backupManager.restoring", {
-                            defaultValue: "Restoring...",
-                          })
-                        : t("settings.backupManager.restore", {
-                            defaultValue: "Restore",
-                          })}
-                    </Button>
+                    {allowRestore && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 px-2 text-xs"
+                        disabled={isRestoring || isDeleting}
+                        onClick={() => setConfirmFilename(backup.filename)}
+                      >
+                        <RotateCcw className="h-3 w-3 mr-1" />
+                        {isRestoring
+                          ? t("settings.backupManager.restoring", {
+                              defaultValue: "Restoring...",
+                            })
+                          : t("settings.backupManager.restore", {
+                              defaultValue: "Restore",
+                            })}
+                      </Button>
+                    )}
                   </div>
                 )}
               </div>

@@ -978,7 +978,8 @@ function App() {
               onOpenChange={() => setCurrentView("providers")}
               onImportSuccess={handleImportSuccess}
               defaultTab={settingsDefaultTab}
-              allowConfigImportExport={!isProviderConfigurationLocked}
+              allowConfigImport={!isProviderConfigurationLocked}
+              allowDatabaseRestore={!isProviderConfigurationLocked}
             />
           );
         case "prompts":

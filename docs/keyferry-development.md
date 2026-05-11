@@ -105,8 +105,14 @@
 - 已配置后保留 KeyFerry 供应商的编辑、测试、用量配置和 Claude 终端入口。
 - 已配置后 provider 列表保留 KeyFerry 供应商和官方 `default` 渠道，允许用户在 KeyFerry 与官方渠道之间切换。
 - 已配置后隐藏新增、复制、删除、排序、导入导出、备份恢复和统一供应商编辑入口。
+- 设置页不要因为 KeyFerry-only 就整块隐藏高级功能；应拆分锁定粒度，只禁用 SQL import、数据库 restore 和 WebDAV 下载恢复，保留导出、手动备份、自动备份设置、WebDAV 配置与上传。
 
 后端防绕过比前端隐藏更重要。KeyFerry-only 模式允许用户更新、测试和切换 KeyFerry 派生 provider 与官方 `default` provider；新增任何能新增、删除、重命名、导入、恢复或同步非 KeyFerry provider 的命令时，都要检查是否需要调用 KeyFerry 配置锁。
+
+补充说明：
+
+- WebDAV 下载恢复现在也受 KeyFerry 配置锁控制，避免通过远端快照把数据库或 provider 状态绕回去。
+- 上游再动设置页时，先检查这些锁是否还是按“破坏性入口”和“安全性入口”分开，而不是回到一刀切。
 
 ## 数据库版本说明
 
